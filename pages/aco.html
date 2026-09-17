@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>蚁群算法 · Algo Playground</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script>window.__ALGO_ACTIVE__ = 'aco.html';</script>
+</head>
+<body>
+  <main class="wrap">
+    <h1>🐜 蚁群算法 · 信息素的智慧</h1>
+    <p class="sub">
+      蚂蚁在路径上留下"信息素"。路越短，来回越快，信息素积累越浓，后续蚂蚁越爱走——
+      正反馈让整个群体<b>自发</b>找到越来越短的路线。下面是经典的旅行商问题（TSP）。
+    </p>
+
+    <section class="card">
+      <div class="btnrow">
+        <span class="tag">城市数</span>
+        <select id="citySel">
+          <option value="8">8 个</option>
+          <option value="12" selected>12 个</option>
+          <option value="16">16 个</option>
+          <option value="20">20 个</option>
+        </select>
+        <button id="btnRun">▶ 进化 30 代</button>
+        <button id="btnAuto" class="amber">◆ 连续进化</button>
+        <button id="btnNew" class="secondary">🎲 换一批城市</button>
+        <span id="srcTag" class="tag">数据源：本地</span>
+      </div>
+      <div class="canvas-host" style="margin-top:14px;">
+        <canvas id="cv" width="620" height="620"></canvas>
+      </div>
+      <p class="info-line" id="stats"></p>
+    </section>
+
+    <section class="card-grid">
+      <div class="card">
+        <h2>演化曲线</h2>
+        <div class="canvas-host" style="padding:10px;">
+          <canvas id="cv2" width="440" height="220"></canvas>
+        </div>
+        <p class="info-line">纵轴 = 当前最优路径长度，越低越好。</p>
+      </div>
+      <div class="card">
+        <h2>为什么这是"涌现"？</h2>
+        <p>没有一只蚂蚁知道全局最优路线，也没有中央指挥官。每只蚂蚁只做两件小事：</p>
+        <p>① 按信息素浓度 + 距离，<b>概率性地</b>选下一个城市<br>
+           ② 走完后在自己路径上<b>加信息素</b></p>
+        <p class="info-line">
+          但群体的结果却是智能的——这是典型的<b>分布式涌现</b>。
+          蚁群算法已被用于物流配送、网络路由、电路布线等实际工程问题。
+          它的兄弟还有：遗传算法（进化）、粒子群（鸟群）、模拟退火（金属冷却）。
+        </p>
+      </div>
+    </section>
+  </main>
+
+  <script src="../assets/js/nav.js"></script>
+  <script src="../assets/js/related.js"></script>
+  <script src="../assets/js/algo-core-ext.js"></script>
+  <script src="../assets/js/ui.js"></script>
+  <script>
+  (function () {
+    "use strict";
+    var cv = document.getElementById('cv');
+    var ctx = cv.getContext('2d');
+    var cv2 = document.getElementById('cv2');
+    var ctx2 = cv2.getContext('2d');
+    var citySel = document.getElementById('citySel');
+    var btnRun = document.getElementById('btnRun');
+    var btnAuto = document.getElementById('btnAuto');
+    var btnNew = document.getElementById('btnNew');
+    var srcTag = document.getElementById('srcTag');
+    var statsEl = document.getElementById('stats');
+
+    var PAD = 50;
+    var cities = [];
+    var bestTour = [];
+    var bestLength = 0;
+    var history = [];
+    var timer = null;
+    var generation = 0;
+    var busy = false;
+    var useLocal = false;
+
+    /* ---------- 绘制 TSP ---------- */
+    function draw() {
+      ctx.fillStyle = '#0b0e1a';
+      ctx.fillRect(0, 0, cv.width, cv.height);
+      var W = cv.width - PAD * 2, H = cv.height - PAD * 2;
+
+      // 城市
+      for (var i = 0; i < cities.length; i++) {
+        var x = PAD + cities[i][0] * W, y = PAD + cities[i][1] * H;
+        ctx.beginPath();
+        ctx.arc(x, y, 7, 0, Math.PI * 2);
+        ctx.fillStyle = '#5eead4';
+        ctx.fill();
+        ctx.strokeStyle = '#0b0e1a';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        // 编号
+        ctx.fillStyle = '#0b0e1a';
+        ctx.font = 'bold 10px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(String(i), x, y);
+      }
+
+      // 路径
+      if (bestTour && bestTour.length > 1) {
+        ctx.strokeStyle = '#fbbf24';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        for (var k = 0; k < bestTour.length; k++) {
+          var a = cities[bestTour[k]];
+          var b = cities[bestTour[(k + 1) % bestTour.length]];
+          ctx.moveTo(PAD + a[0] * W, PAD + a[1] * H);
+          ctx.lineTo(PAD + b[0] * W, PAD + b[1] * H);
+        }
+        ctx.stroke();
+      }
+
+      // 标题
+      ctx.fillStyle = '#9aa3c0';
+      ctx.font = '14px sans-serif';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'alphabetic';
+      ctx.fillText('第 ' + generation + ' 轮 ｜ 当前最优路线长度 ' + bestLength.toFixed(3), 16, 24);
+    }
+
+    /* ---------- 绘制收敛曲线 ---------- */
+    function drawCurve() {
+      ctx2.clearRect(0, 0, cv2.width, cv2.height);
+      ctx2.fillStyle = '#0b0e1a';
+      ctx2.fillRect(0, 0, cv2.width, cv2.height);
+      if (history.length < 2) {
+        ctx2.fillStyle = '#5d6a92';
+        ctx2.font = '13px sans-serif';
+        ctx2.textAlign = 'center';
+        ctx2.fillText('进化后这里会显示收敛曲线', cv2.width / 2, cv2.height / 2);
+        return;
+      }
+      var W = cv2.width, H = cv2.height, padL = 46, padR = 14, padT = 18, padB = 26;
+      var iw = W - padL - padR, ih = H - padT - padB;
+      var mx = Math.max.apply(null, history), mn = Math.min.apply(null, history);
+      if (mx - mn < 1e-9) { mx = mn + 1; }
+
+      ctx2.strokeStyle = '#fbbf24';
+      ctx2.lineWidth = 2;
+      ctx2.beginPath();
+      for (var i = 0; i < history.length; i++) {
+        var x = padL + iw * i / (history.length - 1);
+        var y = padT + ih * (1 - (history[i] - mn) / (mx - mn));
+        if (i === 0) ctx2.moveTo(x, y); else ctx2.lineTo(x, y);
+      }
+      ctx2.stroke();
+
+      ctx2.fillStyle = '#9aa3c0';
+      ctx2.font = '11px sans-serif';
+      ctx2.textAlign = 'right';
+      ctx2.fillText(mx.toFixed(2), padL - 6, padT + 4);
+      ctx2.fillText(mn.toFixed(2), padL - 6, padT + ih);
+      ctx2.textAlign = 'left';
+      ctx2.fillText('第 0 代', padL, H - 8);
+      ctx2.textAlign = 'right';
+      ctx2.fillText('第 ' + (history.length - 1) + ' 代', W - padR, H - 8);
+    }
+
+    /* ---------- 运行 ---------- */
+    function run(generations) {
+      if (busy) return;
+      busy = true;
+      var payload = {
+        cities: cities, ants: 20, iterations: generations,
+        new_cities: cities.length === 0, count: parseInt(citySel.value, 10)
+      };
+      UI.api('/api/aco/run', { method: 'POST', body: payload }).then(function (res) {
+        if (res && res.cities) {
+          srcTag.textContent = '数据源：后端 API';
+          applyResult(res);
+        } else {
+          srcTag.textContent = '数据源：本地兜底';
+          if (!cities.length) cities = AlgoExt.acoRandomCities(parseInt(citySel.value, 10));
+          var r = AlgoExt.acoRun(cities, 20, generations);
+          applyResult(r);
+        }
+        busy = false;
+      });
+    }
+    function applyResult(res) {
+      cities = res.cities;
+      bestTour = res.bestTour || [];
+      bestLength = res.bestLength || 0;
+      generation += (res.generations || res.iterations || 0);
+      history = history.concat(res.history || []);
+      if (history.length > 400) history = history.slice(-400);
+      draw();
+      drawCurve();
+      statsEl.textContent = '城市 ' + cities.length + ' 个 ｜ 蚁群规模 20 ｜ 已进化 ' +
+        generation + ' 代 ｜ 最优路线 ' + bestLength.toFixed(4) +
+        '（越接近理论最优越好）';
+    }
+
+    function stopAuto() {
+      if (timer) { clearInterval(timer); timer = null; }
+      btnAuto.textContent = '◆ 连续进化';
+    }
+
+    btnRun.addEventListener('click', function () { stopAuto(); run(30); });
+    btnAuto.addEventListener('click', function () {
+      if (timer) { stopAuto(); return; }
+      btnAuto.textContent = '⏹ 停止';
+      timer = setInterval(function () { run(5); }, 600);
+    });
+    btnNew.addEventListener('click', function () {
+      stopAuto();
+      cities = []; bestTour = []; bestLength = 0; history = []; generation = 0;
+      run(30);
+    });
+    citySel.addEventListener('change', function () {
+      stopAuto();
+      cities = []; bestTour = []; bestLength = 0; history = []; generation = 0;
+      run(30);
+    });
+
+    /* ---------- 启动 ---------- */
+    drawCurve();
+    draw();
+    run(30);
+  })();
+  </script>
+</body>
+</html>

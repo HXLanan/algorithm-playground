@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>A* 寻路可视化 · Algo Playground</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script>window.__ALGO_ACTIVE__ = 'pathfinding.html';</script>
+</head>
+<body>
+  <main class="wrap">
+    <h1>🗺️ A* 寻路可视化</h1>
+    <p class="sub">
+      从左上角走到右下角。<b>按住鼠标拖动可以画墙</b>，然后点"开始搜索"。
+      A* 靠"到终点的估计距离"引导方向，所以它探索的格子通常比 Dijkstra、BFS 少得多。
+    </p>
+
+    <section class="card">
+      <div class="btnrow">
+        <span class="tag">算法</span>
+        <select id="algoSel">
+          <option value="astar">A* 启发式</option>
+          <option value="dijkstra">Dijkstra</option>
+          <option value="bfs">广度优先 BFS</option>
+          <option value="dfs">深度优先 DFS</option>
+        </select>
+        <button id="btnRun">▶ 开始搜索</button>
+        <button id="btnReset" class="secondary">♻️ 清空墙</button>
+        <button id="btnMaze" class="secondary">🎲 随机迷宫</button>
+        <button id="btnCompare" class="pink">📊 四种算法对比</button>
+        <span id="srcTag" class="tag">数据源：本地</span>
+      </div>
+      <div class="info-line">
+        动画速度 <input type="range" id="speed" min="1" max="100" value="70" style="width:150px; vertical-align:middle;">
+        ｜ 拖动鼠标画墙 / 右键擦除
+      </div>
+      <div class="canvas-host" style="margin-top:14px;">
+        <canvas id="cv" width="900" height="500" style="cursor:crosshair;"></canvas>
+      </div>
+      <p class="info-line" id="stats"></p>
+      <p class="info-line" id="cmpResult"></p>
+    </section>
+
+    <section class="card">
+      <h2>四种搜索策略的差别</h2>
+      <p>🔹 <b>A*</b>：加了启发式 h(n)="到终点的曼哈顿距离"，搜索被"拽"向终点，访问格子最少。</p>
+      <p>🔹 <b>Dijkstra</b>：不看终点，按距离一层层均匀外扩，形状接近<b>圆形</b>。</p>
+      <p>🔹 <b>BFS</b>：无权图下与 Dijkstra 等价，保证最短路径，但搜索范围大。</p>
+      <p>🔹 <b>DFS</b>：一条道走到黑，<b>不保证最短</b>——你能看到它的路径经常绕远。</p>
+      <p class="info-line">点"四种算法对比"可以在同一张地图上直接比较访问格子数。</p>
+    </section>
+  </main>
+
+  <script src="../assets/js/nav.js"></script>
+  <script src="../assets/js/related.js"></script>
+  <script src="../assets/js/algo-core-ext.js"></script>
+  <script src="../assets/js/ui.js"></script>
+  <script>
+  (function () {
+    "use strict";
+    var cv = document.getElementById('cv');
+    var ctx = cv.getContext('2d');
+    var algoSel = document.getElementById('algoSel');
+    var btnRun = document.getElementById('btnRun');
+    var btnReset = document.getElementById('btnReset');
+    var btnMaze = document.getElementById('btnMaze');
+    var btnCompare = document.getElementById('btnCompare');
+    var speedEl = document.getElementById('speed');
+    var statsEl = document.getElementById('stats');
+    var cmpResult = document.getElementById('cmpResult');
+    var srcTag = document.getElementById('srcTag');
+
+    var ROWS = 20, COLS = 36;
+    var CELL = Math.floor(Math.min(cv.width / COLS, cv.height / ROWS));
+    var OX = Math.floor((cv.width - COLS * CELL) / 2);
+    var OY = Math.floor((cv.height - ROWS * CELL) / 2);
+
+    var grid = [];              // 0 通路 1 墙
+    var visited = [];           // 已访问顺序
+    var path = [];              // 最终路径
+    var animIdx = 0, animTimer = null;
+    var START = [0, 0], GOAL = [ROWS - 1, COLS - 1];
+
+    function emptyGrid() {
+      var g = [];
+      for (var r = 0; r < ROWS; r++) { var row = []; for (var c = 0; c < COLS; c++) row.push(0); g.push(row); }
+      return g;
+    }
+
+    /* ---------- 绘制 ---------- */
+    function draw() {
+      ctx.fillStyle = '#0b0e1a';
+      ctx.fillRect(0, 0, cv.width, cv.height);
+
+      var visitedSet = {};
+      for (var i = 0; i < animIdx && i < visited.length; i++) {
+        visitedSet[visited[i][0] + ',' + visited[i][1]] = 1;
+      }
+      var pathSet = {};
+      if (animIdx >= visited.length) {
+        for (var p = 0; p < path.length; p++) pathSet[path[p][0] + ',' + path[p][1]] = 1;
+      }
+
+      for (var r = 0; r < ROWS; r++) {
+        for (var c = 0; c < COLS; c++) {
+          var x = OX + c * CELL, y = OY + r * CELL;
+          var k = r + ',' + c;
+          var color;
+          if (grid[r][c] === 1) color = '#3b4568';                       // 墙
+          else if (pathSet[k]) color = '#34d399';                        // 最终路径
+          else if (visitedSet[k]) color = '#fbbf24';                     // 已访问
+          else color = '#161b2e';                                        // 空地
+          ctx.fillStyle = color;
+          ctx.fillRect(x + 0.5, y + 0.5, CELL - 1, CELL - 1);
+        }
+      }
+      // 起点 / 终点
+      drawMarker(START, '#5eead4', '起');
+      drawMarker(GOAL, '#fb7185', '终');
+    }
+    function drawMarker(pos, col, text) {
+      var x = OX + pos[1] * CELL, y = OX === 0 ? 0 : OY + pos[0] * CELL;
+      ctx.fillStyle = col;
+      ctx.fillRect(OX + pos[1] * CELL + 1, OY + pos[0] * CELL + 1, CELL - 2, CELL - 2);
+      ctx.fillStyle = '#0b0e1a';
+      ctx.font = 'bold ' + Math.max(9, CELL - 6) + 'px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(text, OX + pos[1] * CELL + CELL / 2, OY + pos[0] * CELL + CELL / 2);
+    }
+
+    /* ---------- 搜索 ---------- */
+    function runSearch() {
+      stopAnim();
+      cmpResult.textContent = '';
+      var algo = algoSel.value;
+      var payload = { grid: grid, start: START, goal: GOAL, algo: algo };
+
+      UI.api('/api/pathfinding/search', { method: 'POST', body: payload })
+        .then(function (res) {
+          if (res && res.visited) {
+            srcTag.textContent = '数据源：后端 API';
+            visited = res.visited; path = res.path;
+          } else {
+            srcTag.textContent = '数据源：本地兜底';
+            var r = AlgoExt.pathSearch(grid, START, GOAL, algo);
+            visited = r.visited; path = r.path;
+          }
+          startAnim();
+        });
+    }
+    function startAnim() {
+      animIdx = 0;
+      draw();
+      var delay = Math.max(0, 40 - parseInt(speedEl.value, 10) * 0.38);
+      animTimer = setInterval(function () {
+        if (animIdx >= visited.length) {
+          stopAnim();
+          draw();
+          var found = path.length > 0;
+          statsEl.textContent = (found ? '✅ 找到路径！' : '❌ 无法到达终点') +
+            '　访问格子 ' + visited.length + ' 个　路径长度 ' + path.length + ' 步';
+          return;
+        }
+        animIdx++;
+        draw();
+      }, delay);
+    }
+    function stopAnim() {
+      if (animTimer) { clearInterval(animTimer); animTimer = null; }
+    }
+    function showFinal() {
+      animIdx = visited.length;
+      draw();
+    }
+
+    /* ---------- 鼠标画墙 ---------- */
+    function toCell(ev) {
+      var rect = cv.getBoundingClientRect();
+      var mx = (ev.clientX - rect.left) * (cv.width / rect.width);
+      var my = (ev.clientY - rect.top) * (cv.height / rect.height);
+      var c = Math.floor((mx - OX) / CELL), r = Math.floor((my - OY) / CELL);
+      if (r < 0 || r >= ROWS || c < 0 || c >= COLS) return null;
+      return { r: r, c: c };
+    }
+    function isEndpoint(r, c) {
+      return (r === START[0] && c === START[1]) || (r === GOAL[0] && c === GOAL[1]);
+    }
+    var painting = false, paintVal = 1;
+    cv.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+    cv.addEventListener('mousedown', function (ev) {
+      var p = toCell(ev); if (!p || isEndpoint(p.r, p.c)) return;
+      painting = true;
+      paintVal = (ev.button === 2) ? 0 : (grid[p.r][p.c] ? 0 : 1);
+      grid[p.r][p.c] = paintVal;
+      visited = []; path = []; animIdx = 0;
+      draw();
+    });
+    cv.addEventListener('mousemove', function (ev) {
+      if (!painting) return;
+      var p = toCell(ev); if (!p || isEndpoint(p.r, p.c)) return;
+      if (grid[p.r][p.c] !== paintVal) { grid[p.r][p.c] = paintVal; draw(); }
+    });
+    window.addEventListener('mouseup', function () { painting = false; });
+
+    /* ---------- 按钮 ---------- */
+    btnRun.addEventListener('click', runSearch);
+    btnReset.addEventListener('click', function () {
+      stopAnim(); grid = emptyGrid(); visited = []; path = []; animIdx = 0;
+      statsEl.textContent = ''; cmpResult.textContent = ''; draw();
+    });
+    btnMaze.addEventListener('click', function () {
+      stopAnim();
+      grid = AlgoExt.makeMaze(ROWS, COLS);
+      grid[START[0]][START[1]] = 0; grid[GOAL[0]][GOAL[1]] = 0;
+      visited = []; path = []; animIdx = 0; statsEl.textContent = ''; draw();
+    });
+    btnCompare.addEventListener('click', function () {
+      stopAnim(); cmpResult.textContent = '正在对比四种算法…';
+      UI.api('/api/pathfinding/compare', { method: 'POST', body: { grid: grid, start: START, goal: GOAL } })
+        .then(function (res) {
+          if (res && res.comparison) {
+            var lines = [];
+            var keys = ['astar', 'dijkstra', 'bfs', 'dfs'];
+            for (var i = 0; i < keys.length; i++) {
+              var v = res.comparison[keys[i]];
+              lines.push(v.name + '：访问 ' + v.visitedCount + ' 格，路径 ' + v.pathLength + ' 步');
+            }
+            cmpResult.textContent = '📊 ' + lines.join('　｜　');
+          } else {
+            // 本地兜底
+            var out = [];
+            var ks = ['astar', 'dijkstra', 'bfs', 'dfs'];
+            for (var j = 0; j < ks.length; j++) {
+              var r = AlgoExt.pathSearch(grid, START, GOAL, ks[j]);
+              out.push(ks[j] + '：访问 ' + r.visitedCount + '，路径 ' + r.pathLength);
+            }
+            cmpResult.textContent = '📊 (本地) ' + out.join('　｜　');
+          }
+        });
+    });
+
+    /* ---------- 启动 ---------- */
+    grid = AlgoExt.makeMaze(ROWS, COLS);
+    grid[START[0]][START[1]] = 0; grid[GOAL[0]][GOAL[1]] = 0;
+    draw();
+  })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>滑动窗口 · Algo Playground</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script>window.__ALGO_ACTIVE__ = 'sliding-window.html';</script>
+</head>
+<body>
+  <main class="wrap">
+    <h1>🪟 滑动窗口</h1>
+    <p class="sub">
+      在数组或字符串中找满足条件的<b>连续子区间</b>时，不要枚举所有区间（那是 O(n²)）。
+      用两个指针维护一个"窗口"：右指针扩张、左指针收缩，总共只需 <b>O(n)</b>。
+    </p>
+
+    <section class="card">
+      <div class="btnrow">
+        <span class="tag">问题</span>
+        <select id="modeSel">
+          <option value="fixed">① 定长窗口：长度 k 的最大子数组和</option>
+          <option value="min">② 最短窗口：和 ≥ target 的最短子数组</option>
+          <option value="longest">③ 最长窗口：无重复字符的最长子串</option>
+        </select>
+        <button id="btnPlay">▶ 播放</button>
+        <button id="btnStep" class="amber">⏭ 单步</button>
+        <button id="btnReset" class="secondary">♻️ 重置</button>
+        <span id="srcTag" class="tag">数据源：本地</span>
+      </div>
+
+      <div class="btnrow" id="paramRow">
+        <span class="tag" id="p1Label">数组</span>
+        <input id="p1Input" type="text" value="2,3,1,2,4,3"
+               style="width:220px;background:#232a45;color:#e6e9f5;border:1px solid #2e3654;border-radius:8px;padding:7px 10px;font-family:monospace;">
+        <span class="tag" id="p2Label">k</span>
+        <input id="p2Input" type="text" value="3"
+               style="width:80px;background:#232a45;color:#e6e9f5;border:1px solid #2e3654;border-radius:8px;padding:7px 10px;font-family:monospace;">
+      </div>
+
+      <div class="canvas-host" style="margin-top:14px;">
+        <canvas id="cv" width="900" height="300"></canvas>
+      </div>
+      <p class="info-line" id="msg" style="color:#fbbf24;font-weight:600;"></p>
+      <p class="info-line" id="resultView" style="font-size:16px;font-weight:700;"></p>
+      <p class="info-line" id="stats"></p>
+    </section>
+
+    <section class="card-grid">
+      <div class="card">
+        <h2>三种窗口类型</h2>
+        <p><b>① 定长窗口</b>：窗口大小固定为 k，整体向右平移。
+           每次"进一个、出一个"，O(1) 更新答案。</p>
+        <p><b>② 最短窗口（求最短）</b>：右指针扩张直到满足条件，
+           然后左指针收缩直到不满足。记录过程中最短的那次。</p>
+        <p><b>③ 最长窗口（求最长）</b>：右指针扩张，
+           一旦违反条件就移动左指针修复。全程最长的窗口就是答案。</p>
+      </div>
+      <div class="card">
+        <h2>为什么是 O(n)？</h2>
+        <p>关键在于：<b>左右指针都只前进、从不后退</b>。</p>
+        <p>右指针从 0 走到 n-1 共 n 步；左指针也最多走 n 步。
+           两者加起来仍是 2n → O(n)。</p>
+        <p class="info-line">对比暴力枚举所有子区间是 O(n²)，
+           滑动窗口把复杂度整整降了一个量级——这是"双指针"思想的威力。</p>
+        <p class="info-line">LeetCode 高频题：3. 无重复字符最长子串、209. 长度最小子数组、
+           438. 找所有字母异位词、567. 字符串的排列、76. 最小覆盖子串。</p>
+      </div>
+    </section>
+  </main>
+
+  <script src="../assets/js/nav.js"></script>
+  <script src="../assets/js/related.js"></script>
+  <script src="../assets/js/algo-core-ext.js"></script>
+  <script src="../assets/js/ui.js"></script>
+  <script>
+  (function () {
+    "use strict";
+    var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+    var modeSel = document.getElementById('modeSel');
+    var p1Input = document.getElementById('p1Input'), p2Input = document.getElementById('p2Input');
+    var p1Label = document.getElementById('p1Label'), p2Label = document.getElementById('p2Label');
+    var btnPlay = document.getElementById('btnPlay'), btnStep = document.getElementById('btnStep');
+    var btnReset = document.getElementById('btnReset');
+    var msg = document.getElementById('msg'), resultView = document.getElementById('resultView');
+    var statsEl = document.getElementById('stats'), srcTag = document.getElementById('srcTag');
+
+    var W = 900, H = 300;
+    var data = null;       // 结果对象
+    var cur = 0, timer = null;
+    var seq = [];          // 展示用的数组或字符数组
+
+    function parseNums(s) {
+      return s.split(/[,，\s]+/).map(function (x) { return parseInt(x, 10); })
+              .filter(function (x) { return !isNaN(x); }).slice(0, 40);
+    }
+
+    /* ---------- 绘制 ---------- */
+    function draw() {
+      ctx.clearRect(0, 0, W, H);
+      if (!data || !seq.length) return;
+
+      var n = seq.length;
+      var cw = Math.min(60, (W - 100) / n);
+      var startX = (W - cw * n) / 2;
+      var y = 120, ch = 62;
+
+      var s = (cur > 0 && cur <= data.steps.length) ? data.steps[cur - 1] : null;
+      var lo = s ? s.lo : -1, hi = s ? s.hi : -1;
+
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+
+      for (var i = 0; i < n; i++) {
+        var x = startX + i * cw;
+        var inWin = (hi >= 0 && i >= lo && i <= hi);
+        var isEdge = (i === lo || i === hi);
+
+        ctx.fillStyle = isEdge ? '#fbbf24' : (inWin ? 'rgba(94,234,212,0.28)' : '#2b3350');
+        ctx.fillRect(x + 2, y, cw - 4, ch);
+        ctx.strokeStyle = inWin ? '#5eead4' : '#4a5578';
+        ctx.lineWidth = isEdge ? 2.5 : 1.2;
+        ctx.strokeRect(x + 2, y, cw - 4, ch);
+
+        ctx.fillStyle = isEdge ? '#0b0e1a' : (inWin ? '#eafff5' : '#e6e9f5');
+        ctx.font = 'bold ' + (cw > 42 ? 17 : 12) + 'px monospace';
+        ctx.fillText(String(seq[i]), x + cw / 2, y + ch / 2);
+
+        ctx.fillStyle = '#5d6a92';
+        ctx.font = '10px sans-serif';
+        ctx.fillText(String(i), x + cw / 2, y + ch + 14);
+      }
+
+      // 窗口标注
+      if (lo >= 0 && hi >= 0 && hi >= lo) {
+        var wx1 = startX + lo * cw + 2;
+        var wx2 = startX + (hi + 1) * cw - 2;
+        ctx.strokeStyle = '#5eead4';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(wx1, y - 14);
+        ctx.lineTo(wx2, y - 14);
+        ctx.stroke();
+        ctx.fillStyle = '#5eead4';
+        ctx.font = 'bold 12px sans-serif';
+        ctx.fillText('当前窗口 [' + lo + ', ' + hi + ']  长度 ' + (hi - lo + 1),
+                     (wx1 + wx2) / 2, y - 28);
+      }
+
+      // 最佳结果的区间（若有）
+      if (data.bestRange && cur >= data.steps.length) {
+        var b1 = startX + data.bestRange[0] * cw + 2;
+        var b2 = startX + (data.bestRange[1] + 1) * cw - 2;
+        ctx.strokeStyle = '#34d399';
+        ctx.lineWidth = 3;
+        ctx.setLineDash([6, 4]);
+        ctx.beginPath();
+        ctx.moveTo(b1, y + ch + 30);
+        ctx.lineTo(b2, y + ch + 30);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = '#34d399';
+        ctx.font = 'bold 12px sans-serif';
+        ctx.fillText('最佳区间', (b1 + b2) / 2, y + ch + 46);
+      }
+
+      // 顶部标题
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'alphabetic';
+      ctx.fillStyle = '#9aa3c0';
+      ctx.font = '14px sans-serif';
+      var title = modeSel.value === 'fixed' ? '定长窗口：长度为 k 的最大和'
+                : (modeSel.value === 'min' ? '最短窗口：和 ≥ target 的最短子数组'
+                : '最长窗口：无重复字符的最长子串');
+      ctx.fillText(title, 24, 34);
+    }
+
+    function updateUI() {
+      if (!data) return;
+      var total = data.steps.length;
+      var s = (cur > 0 && cur <= total) ? data.steps[cur - 1] : null;
+      msg.textContent = s ? (s.msg || '') : '准备开始…';
+      statsEl.textContent = '步骤 ' + cur + ' / ' + total;
+
+      var mode = modeSel.value;
+      if (mode === 'fixed') {
+        resultView.textContent = '🎯 长度为 ' + data.k + ' 的最大子数组和 = ' + data.maxSum +
+          '（区间 [' + data.bestRange[0] + ', ' + data.bestRange[1] + ']）';
+      } else if (mode === 'min') {
+        resultView.textContent = data.minLength
+          ? '🎯 最短长度 = ' + data.minLength + '（区间 [' + data.bestRange[0] + ', ' + data.bestRange[1] + ']）'
+          : '🎯 不存在满足条件的子数组';
+      } else {
+        resultView.textContent = '🎯 最长无重复子串 = "' + data.substring + '"，长度 ' + data.length;
+      }
+    }
+    function render() { draw(); updateUI(); }
+
+    /* ---------- 运行 ---------- */
+    function run() {
+      stopPlay();
+      var mode = modeSel.value;
+
+      if (mode === 'longest') {
+        var text = p1Input.value.replace(/[,\s，]+/g, '') || 'abcabcbb';
+        seq = text.split('');
+        UI.api('/api/sliding-window/longest', { method: 'POST', body: { text: text } })
+          .then(function (res) {
+            if (res && res.steps) { srcTag.textContent = '数据源：后端 API'; }
+            else { srcTag.textContent = '数据源：本地兜底'; res = AlgoExt.swLongest(text); }
+            data = res; cur = 0; render();
+          });
+        return;
+      }
+
+      var nums = parseNums(p1Input.value);
+      if (nums.length < 2) nums = [2, 3, 1, 2, 4, 3];
+      seq = nums;
+
+      if (mode === 'fixed') {
+        var k = parseInt(p2Input.value, 10) || 3;
+        k = Math.min(nums.length, Math.max(1, k));
+        UI.api('/api/sliding-window/fixed', { method: 'POST', body: { nums: nums, k: k } })
+          .then(function (res) {
+            if (res && res.steps) { srcTag.textContent = '数据源：后端 API'; }
+            else { srcTag.textContent = '数据源：本地兜底'; res = AlgoExt.swFixed(nums, k); }
+            data = res; cur = 0; render();
+          });
+      } else {
+        var t = parseInt(p2Input.value, 10) || 7;
+        UI.api('/api/sliding-window/min', { method: 'POST', body: { nums: nums, target: t } })
+          .then(function (res) {
+            if (res && res.steps) { srcTag.textContent = '数据源：后端 API'; }
+            else { srcTag.textContent = '数据源：本地兜底'; res = AlgoExt.swMin(nums, t); }
+            data = res; cur = 0; render();
+          });
+      }
+    }
+
+    function updateParams() {
+      var mode = modeSel.value;
+      if (mode === 'longest') {
+        p1Label.textContent = '字符串';
+        p2Label.textContent = '（无需参数）';
+        p1Input.value = 'abcabcbb';
+        p2Input.value = '';
+        p2Input.disabled = true;
+      } else if (mode === 'fixed') {
+        p1Label.textContent = '数组';
+        p2Label.textContent = '窗口长度 k';
+        p1Input.value = '2,3,1,2,4,3';
+        p2Input.value = '3';
+        p2Input.disabled = false;
+      } else {
+        p1Label.textContent = '数组（非负）';
+        p2Label.textContent = '目标和 target';
+        p1Input.value = '2,3,1,2,4,3';
+        p2Input.value = '7';
+        p2Input.disabled = false;
+      }
+    }
+
+    function stopPlay() { if (timer) { clearInterval(timer); timer = null; } btnPlay.textContent = '▶ 播放'; }
+    function play() {
+      if (timer) { stopPlay(); return; }
+      if (!data) { run(); return; }
+      if (cur >= data.steps.length) { cur = 0; render(); }
+      btnPlay.textContent = '⏸ 暂停';
+      timer = setInterval(function () {
+        if (cur >= data.steps.length) { stopPlay(); return; }
+        cur++; render();
+      }, 560);
+    }
+    function stepOnce() {
+      stopPlay();
+      if (!data) { run(); return; }
+      if (cur < data.steps.length) { cur++; render(); }
+    }
+
+    btnPlay.addEventListener('click', play);
+    btnStep.addEventListener('click', stepOnce);
+    btnReset.addEventListener('click', function () { stopPlay(); cur = 0; render(); });
+    modeSel.addEventListener('change', function () { updateParams(); run(); });
+    p1Input.addEventListener('change', run);
+    p2Input.addEventListener('change', run);
+
+    updateParams();
+    run();
+  })();
+  </script>
+</body>
+</html>

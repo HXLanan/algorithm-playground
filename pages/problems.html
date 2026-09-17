@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LeetCode 题库 · Algo Playground</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script>window.__ALGO_ACTIVE__ = 'problems.html';</script>
+</head>
+<body>
+  <main class="wrap">
+    <h1>📝 LeetCode 题库</h1>
+    <p class="sub">
+      把「看得懂算法」和「写得出代码」连起来。每道题都标注了<b>关联的可视化演示</b>——
+      想不通思路时，点过去看动画。写完代码还能<b>直接在页面里跑测试用例</b>。
+    </p>
+
+    <section class="card">
+      <div class="btnrow">
+        <input id="kwInput" type="text" placeholder="🔍 搜索题目名 / 题号 / 标签…"
+               style="flex:1 1 220px;min-width:180px;background:#232a45;color:#e6e9f5;border:1px solid #2e3654;border-radius:9px;padding:9px 12px;">
+        <button id="btnSearch">搜索</button>
+        <button id="btnReset" class="secondary">重置</button>
+      </div>
+      <div class="btnrow">
+        <span class="tag">难度</span>
+        <select id="diffSel">
+          <option value="">全部</option>
+          <option value="简单">简单</option>
+          <option value="中等">中等</option>
+          <option value="困难">困难</option>
+        </select>
+        <span class="tag">分类</span>
+        <select id="catSel"><option value="">全部</option></select>
+        <span class="tag">标签</span>
+        <select id="tagSel"><option value="">全部</option></select>
+        <span class="tag">只看</span>
+        <select id="visSel">
+          <option value="">所有题目</option>
+          <option value="linked">🔗 有可视化演示的</option>
+        </select>
+      </div>
+      <p class="info-line" id="statLine"></p>
+    </section>
+
+    <div id="listHost"></div>
+
+    <section class="card">
+      <h2>怎么用这个题库？</h2>
+      <p>① <b>按分类刷</b>：从上到下是推荐的刷题顺序（数组 → 双指针 → 滑窗 → 二分 → …）</p>
+      <p>② <b>卡住了就点「看演示」</b>：跳到对应的算法可视化页，把抽象思路变成动画</p>
+      <p>③ <b>在线判题</b>：在题目详情页写代码，点运行即可用测试用例验证</p>
+      <p class="info-line">
+        ⚠️ 判题器运行在本机、用于练习自测，<b>不是生产级沙箱</b>（仅支持 collections / heapq / math 等
+        纯计算模块）。请勿把服务暴露到公网。
+      </p>
+    </section>
+  </main>
+
+  <script src="../assets/js/nav.js"></script>
+  <script src="../assets/js/ui.js"></script>
+  <script>
+  (function () {
+    "use strict";
+    var kwInput = document.getElementById('kwInput');
+    var btnSearch = document.getElementById('btnSearch'), btnReset = document.getElementById('btnReset');
+    var diffSel = document.getElementById('diffSel'), catSel = document.getElementById('catSel');
+    var tagSel = document.getElementById('tagSel'), visSel = document.getElementById('visSel');
+    var statLine = document.getElementById('statLine'), listHost = document.getElementById('listHost');
+
+    // 离线兜底的最小题库摘要（后端不可用时也能看到列表）
+    var FALLBACK = [
+      { slug:'two-sum', lcId:1, title:'两数之和', difficulty:'简单', category:'数组与哈希',
+        tags:['数组','哈希表'], visualizer:'sort.html', descBrief:'找出数组中和为目标值的两个数…' },
+      { slug:'length-of-longest-substring', lcId:3, title:'无重复字符的最长子串', difficulty:'中等',
+        category:'滑动窗口', tags:['字符串','滑动窗口','哈希表'], visualizer:'sliding-window.html',
+        descBrief:'找出不含重复字符的最长子串长度…' },
+      { slug:'binary-search', lcId:704, title:'二分查找', difficulty:'简单', category:'二分查找',
+        tags:['数组','二分查找'], visualizer:'binary-search.html', descBrief:'在有序数组中查找目标值…' },
+      { slug:'n-queens', lcId:51, title:'N 皇后', difficulty:'困难', category:'递归与回溯',
+        tags:['回溯','数组'], visualizer:'nqueens.html', descBrief:'返回所有 n 皇后问题的解决方案…' },
+      { slug:'climbing-stairs', lcId:70, title:'爬楼梯', difficulty:'简单', category:'动态规划',
+        tags:['动态规划'], visualizer:'fibonacci.html', descBrief:'有多少种不同的方法可以爬到楼顶…' },
+      { slug:'number-of-islands', lcId:200, title:'岛屿数量', difficulty:'中等', category:'图与树',
+        tags:['图','BFS','DFS'], visualizer:'pathfinding.html', descBrief:'计算网格中岛屿的数量…' },
+      { slug:'course-schedule', lcId:207, title:'课程表', difficulty:'中等', category:'图与树',
+        tags:['图','拓扑排序'], visualizer:'topo-sort.html', descBrief:'判断是否可能完成所有课程…' },
+      { slug:'game-of-life', lcId:289, title:'生命游戏', difficulty:'中等', category:'模拟与进阶',
+        tags:['数组','矩阵','模拟'], visualizer:'life.html', descBrief:'计算面板的下一个状态…' }
+    ];
+
+    var DIFF_COLOR = { '简单': '#34d399', '中等': '#fbbf24', '困难': '#fb7185' };
+    var CATEGORY_ORDER = ['数组与哈希','双指针','滑动窗口','二分查找','排序','递归与回溯',
+                          '动态规划','图与树','栈与队列','链表','字符串','贪心','模拟与进阶'];
+
+    function api(path) {
+      return UI.api(path).then(function (r) { return r; });
+    }
+
+    function buildQuery() {
+      var parts = [];
+      var kw = kwInput.value.trim();
+      if (kw) parts.push('keyword=' + encodeURIComponent(kw));
+      if (diffSel.value) parts.push('difficulty=' + encodeURIComponent(diffSel.value));
+      if (catSel.value) parts.push('category=' + encodeURIComponent(catSel.value));
+      if (tagSel.value) parts.push('tag=' + encodeURIComponent(tagSel.value));
+      return parts.length ? ('?' + parts.join('&')) : '';
+    }
+
+    function renderList(items, total) {
+      var filtered = items;
+      if (visSel.value === 'linked') {
+        filtered = items.filter(function (x) { return x.visualizer; });
+      }
+
+      if (!filtered.length) {
+        listHost.innerHTML = '<section class="card"><p>没有匹配的题目。试试放宽筛选条件。</p></section>';
+        statLine.textContent = '共 0 道题';
+        return;
+      }
+
+      // 按分类分组
+      var groups = {};
+      filtered.forEach(function (it) {
+        var c = it.category || '其他';
+        if (!groups[c]) groups[c] = [];
+        groups[c].push(it);
+      });
+      var cats = Object.keys(groups).sort(function (a, b) {
+        var ia = CATEGORY_ORDER.indexOf(a), ib = CATEGORY_ORDER.indexOf(b);
+        if (ia < 0) ia = 99; if (ib < 0) ib = 99;
+        return ia - ib;
+      });
+
+      var html = '';
+      cats.forEach(function (cat) {
+        html += '<section class="card">';
+        html += '<h2>' + cat + ' <span style="font-size:13px;color:#9aa3c0;font-weight:400;">'
+              + groups[cat].length + ' 道</span></h2>';
+        html += '<div style="display:flex;flex-direction:column;gap:8px;margin-top:10px;">';
+        groups[cat].forEach(function (it) {
+          var dc = DIFF_COLOR[it.difficulty] || '#9aa3c0';
+          html += '<div style="display:flex;align-items:flex-start;gap:12px;padding:11px 14px;'
+                + 'background:#161b2e;border:1px solid #2e3654;border-radius:11px;flex-wrap:wrap;">';
+          // 题号 + 标题
+          html += '<div style="flex:1 1 260px;min-width:200px;">';
+          html += '<a href="problem.html?slug=' + it.slug + '" style="color:#e6e9f5;text-decoration:none;'
+                + 'font-weight:600;font-size:15px;">' + it.lcId + '. ' + it.title + '</a>';
+          html += '<div style="margin-top:5px;font-size:12.5px;color:#8b96bd;">' + (it.descBrief || '') + '</div>';
+          html += '<div style="margin-top:7px;">';
+          html += '<span style="font-size:11px;padding:2px 8px;border-radius:20px;background:' + dc
+                + ';color:#0b0e1a;font-weight:700;">' + it.difficulty + '</span>';
+          (it.tags || []).slice(0, 4).forEach(function (t) {
+            html += '<span style="font-size:11px;padding:2px 8px;border-radius:20px;background:#232a45;'
+                  + 'color:#9aa3c0;margin-left:5px;">' + t + '</span>';
+          });
+          html += '</div></div>';
+          // 关联可视化
+          html += '<div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end;">';
+          if (it.visualizer) {
+            html += '<a href="' + it.visualizer + '" class="tile" style="padding:6px 12px;border-radius:8px;'
+                  + 'font-size:12.5px;text-decoration:none;color:#5eead4;border:1px solid #2e3654;'
+                  + 'background:#1c2238;white-space:nowrap;">🧩 看演示</a>';
+          }
+          html += '<a href="problem.html?slug=' + it.slug + '" style="padding:6px 12px;border-radius:8px;'
+                + 'font-size:12.5px;text-decoration:none;color:#0b0e1a;background:#5eead4;'
+                + 'font-weight:600;white-space:nowrap;">做题 →</a>';
+          html += '</div></div>';
+        });
+        html += '</div></section>';
+      });
+      listHost.innerHTML = html;
+      statLine.textContent = '当前显示 ' + filtered.length + ' 道题' +
+        (filtered.length !== total ? ('（总计 ' + total + ' 道）') : '');
+    }
+
+    function load() {
+      api('/api/problems/list' + buildQuery()).then(function (res) {
+        if (res && res.items) {
+          renderList(res.items, res.total);
+        } else {
+          renderList(FALLBACK, FALLBACK.length);
+          statLine.textContent = '⚠️ 未连接后端，显示内置示例题库';
+        }
+      });
+    }
+
+    function loadMeta() {
+      api('/api/problems/meta').then(function (res) {
+        var cats, tags, st;
+        if (res && res.categories) {
+          cats = res.categories; tags = res.tags; st = res.stats;
+        } else {
+          cats = []; tags = []; st = null;
+        }
+        cats.forEach(function (c) {
+          var o = document.createElement('option');
+          o.value = c.name; o.textContent = c.name + ' (' + c.count + ')';
+          catSel.appendChild(o);
+        });
+        tags.slice(0, 30).forEach(function (t) {
+          var o = document.createElement('option');
+          o.value = t.name; o.textContent = t.name + ' (' + t.count + ')';
+          tagSel.appendChild(o);
+        });
+        if (st) {
+          statLine.textContent = '题库共 ' + st.total + ' 道题　｜　难度：简单 ' +
+            st.byDifficulty['简单'] + ' / 中等 ' + st.byDifficulty['中等'] +
+            ' / 困难 ' + st.byDifficulty['困难'] +
+            '　｜　其中 ' + st.withVisualizer + ' 道有可视化演示';
+        }
+      });
+    }
+
+    btnSearch.addEventListener('click', load);
+    btnReset.addEventListener('click', function () {
+      kwInput.value = ''; diffSel.value = ''; catSel.value = ''; tagSel.value = ''; visSel.value = '';
+      load();
+    });
+    kwInput.addEventListener('keydown', function (e) { if (e.key === 'Enter') load(); });
+    [diffSel, catSel, tagSel, visSel].forEach(function (el) {
+      el.addEventListener('change', load);
+    });
+
+    loadMeta();
+    load();
+  })();
+  </script>
+</body>
+</html>

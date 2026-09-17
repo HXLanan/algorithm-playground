@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>曼德勃罗集 · 分形 · Algo Playground</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script>window.__ALGO_ACTIVE__ = 'mandelbrot.html';</script>
+</head>
+<body>
+  <main class="wrap">
+    <h1>🌀 曼德勃罗集 · 分形之美</h1>
+    <p class="sub">
+      对复平面上的每个点 c，反复迭代 <b>z ← z² + c</b>（从 z=0 开始）。
+      如果 |z| 始终不逃逸到无穷，这个 c 就属于曼德勃罗集。
+      <b>在图上点击可以放大</b>，看看边界里藏着多少结构。
+    </p>
+
+    <section class="card">
+      <div class="btnrow">
+        <button id="btnZoomIn">🔍 放大 2×</button>
+        <button id="btnZoomOut">🔎 缩小 2×</button>
+        <button id="btnReset" class="secondary">↺ 回到全景</button>
+        <span class="tag">著名视点</span>
+        <select id="viewSel">
+          <option value="">— 选择 —</option>
+        </select>
+        <span id="srcTag" class="tag">数据源：本地</span>
+      </div>
+      <div class="info-line">
+        迭代深度 <input type="range" id="iterRange" min="20" max="200" value="80" style="width:170px; vertical-align:middle;">
+        <span id="iterVal" style="color:#fbbf24;font-weight:700;">80</span>
+        ｜ 当前缩放 <b id="zoomVal">1.0×</b>
+        ｜ 中心 (<span id="centerVal">-0.5, 0</span>)
+      </div>
+      <div class="canvas-host" style="margin-top:14px;">
+        <canvas id="cv" width="900" height="600" style="cursor:crosshair;"></canvas>
+      </div>
+      <p class="info-line" id="hint">💡 提示：点击画面上任意位置即可放大到该处。</p>
+    </section>
+
+    <section class="card">
+      <h2>为什么这么神奇？</h2>
+      <p>整个曼德勃罗集只由一个极简的公式定义：<b>z<sub>n+1</sub> = z<sub>n</sub>² + c</b>，从 z<sub>0</sub> = 0 开始迭代。</p>
+      <p>· <b>黑色区域</b>：迭代任意多次都不逃逸 → 属于集合<br>
+         · <b>彩色区域</b>：很快就发散到无穷 → 颜色表示"逃逸得有多快"</p>
+      <p class="info-line">
+        最惊人的是：它的边界具有<b>无限细节</b>——无论放大多少倍，总能看到新的、自相似又永不重复的结构。
+        而且它已被证明是<b>连通的</b>，却有着无限复杂的边界。这是"简单规则产生无限复杂"的终极例证。
+      </p>
+    </section>
+  </main>
+
+  <script src="../assets/js/nav.js"></script>
+  <script src="../assets/js/related.js"></script>
+  <script src="../assets/js/algo-core-ext.js"></script>
+  <script src="../assets/js/ui.js"></script>
+  <script>
+  (function () {
+    "use strict";
+    var cv = document.getElementById('cv');
+    var ctx = cv.getContext('2d');
+    var btnZoomIn = document.getElementById('btnZoomIn');
+    var btnZoomOut = document.getElementById('btnZoomOut');
+    var btnReset = document.getElementById('btnReset');
+    var viewSel = document.getElementById('viewSel');
+    var iterRange = document.getElementById('iterRange');
+    var iterVal = document.getElementById('iterVal');
+    var zoomVal = document.getElementById('zoomVal');
+    var centerVal = document.getElementById('centerVal');
+    var srcTag = document.getElementById('srcTag');
+    var hint = document.getElementById('hint');
+
+    var W = 900, H = 600;
+    var state = { cx: -0.5, cy: 0, zoom: 1.0, maxIter: 80 };
+    var imageData = ctx.createImageData(W, H);
+    var busy = false;
+
+    /* ---------- 上色 ---------- */
+    function colorFor(it, maxIter) {
+      if (it >= maxIter) return [0, 0, 0];         // 集合内部：黑
+      // 平滑调色：用迭代次数映射到色相
+      var t = it / maxIter;
+      var r, g, b;
+      if (t < 0.15) { r = 20 + t * 400; g = 30 + t * 300; b = 120 + t * 500; }
+      else if (t < 0.4) { r = 80 + t * 200; g = 75 + t * 350; b = 195 - t * 200; }
+      else if (t < 0.7) { r = 160 + t * 120; g = 215 - t * 100; b = 115 - t * 100; }
+      else { r = 245; g = 145 - (t - 0.7) * 200; b = 45 + (t - 0.7) * 100; }
+      return [
+        Math.max(0, Math.min(255, r | 0)),
+        Math.max(0, Math.min(255, g | 0)),
+        Math.max(0, Math.min(255, b | 0))
+      ];
+    }
+
+    /* ---------- 渲染 ---------- */
+    function renderWithGrid(grid, gw, gh) {
+      var scaleX = W / gw, scaleY = H / gh;
+      var d = imageData.data;
+      for (var y = 0; y < H; y++) {
+        var gy = Math.min(gh - 1, Math.floor(y / scaleY));
+        for (var x = 0; x < W; x++) {
+          var gx = Math.min(gw - 1, Math.floor(x / scaleX));
+          var it = grid[gy][gx];
+          var c = colorFor(it, state.maxIter);
+          var idx = (y * W + x) * 4;
+          d[idx] = c[0]; d[idx + 1] = c[1]; d[idx + 2] = c[2]; d[idx + 3] = 255;
+        }
+      }
+      ctx.putImageData(imageData, 0, 0);
+      drawOverlay();
+    }
+    function drawOverlay() {
+      ctx.fillStyle = 'rgba(15,18,32,0.75)';
+      ctx.fillRect(8, 8, 250, 26);
+      ctx.fillStyle = '#5eead4';
+      ctx.font = 'bold 13px sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText('缩放 ' + formatZoom(state.zoom) + '×  ｜  迭代 ' + state.maxIter, 16, 26);
+    }
+    function formatZoom(z) {
+      if (z < 1000) return z.toFixed(z < 10 ? 1 : 0);
+      return z.toExponential(1);
+    }
+
+    /* ---------- 计算（后端优先，失败本地兜底） ---------- */
+    function compute() {
+      if (busy) return;
+      busy = true;
+      hint.textContent = '正在渲染…';
+      var gw = 150, gh = 100;      // 后端网格分辨率（前端再放大绘制）
+      var q = '?width=' + gw + '&height=' + gh +
+              '&cx=' + state.cx + '&cy=' + state.cy +
+              '&zoom=' + state.zoom + '&max_iter=' + state.maxIter;
+
+      UI.api('/api/mandelbrot/render' + q).then(function (res) {
+        var grid, w, h;
+        if (res && res.grid) {
+          srcTag.textContent = '数据源：后端 API';
+          grid = res.grid; w = res.width; h = res.height;
+        } else {
+          srcTag.textContent = '数据源：本地兜底';
+          var r = AlgoExt.mandelbrotRender(150, 100, state.cx, state.cy, state.zoom, state.maxIter);
+          grid = r.grid; w = r.width; h = r.height;
+        }
+        renderWithGrid(grid, w, h);
+        updateInfo();
+        hint.textContent = '💡 提示：点击画面上任意位置即可放大到该处。';
+        busy = false;
+      });
+    }
+
+    function updateInfo() {
+      zoomVal.textContent = formatZoom(state.zoom) + '×';
+      centerVal.textContent = state.cx.toFixed(6) + ', ' + state.cy.toFixed(6);
+      iterVal.textContent = state.maxIter;
+    }
+
+    /* ---------- 交互 ---------- */
+    cv.addEventListener('click', function (ev) {
+      var rect = cv.getBoundingClientRect();
+      var mx = (ev.clientX - rect.left) * (W / rect.width);
+      var my = (ev.clientY - rect.top) * (H / rect.height);
+      // 屏幕坐标 → 复平面坐标
+      var span = 3.0 / state.zoom;
+      var aspect = W / H;
+      var x0 = state.cx - span / 2;
+      var y0 = state.cy - (span / aspect) / 2;
+      state.cx = x0 + (mx / W) * span;
+      state.cy = y0 + (my / H) * (span / aspect);
+      state.zoom *= 2;
+      // 缩放加深迭代，保持细节
+      state.maxIter = Math.min(200, Math.round(state.maxIter * 1.15) + 5);
+      iterRange.value = state.maxIter;
+      compute();
+    });
+
+    btnZoomIn.addEventListener('click', function () {
+      state.zoom *= 2;
+      state.maxIter = Math.min(200, state.maxIter + 15);
+      iterRange.value = state.maxIter;
+      compute();
+    });
+    btnZoomOut.addEventListener('click', function () {
+      state.zoom = Math.max(0.25, state.zoom / 2);
+      compute();
+    });
+    btnReset.addEventListener('click', function () {
+      state = { cx: -0.5, cy: 0, zoom: 1.0, maxIter: 80 };
+      iterRange.value = 80;
+      compute();
+    });
+    iterRange.addEventListener('input', function () {
+      state.maxIter = parseInt(iterRange.value, 10);
+      iterVal.textContent = state.maxIter;
+    });
+    iterRange.addEventListener('change', compute);
+    viewSel.addEventListener('change', function () {
+      if (!viewSel.value) return;
+      var v = null;
+      for (var i = 0; i < views.length; i++) if (views[i].id === viewSel.value) v = views[i];
+      if (!v) return;
+      state.cx = v.cx; state.cy = v.cy; state.zoom = v.zoom;
+      compute();
+    });
+
+    /* ---------- 视点列表 ---------- */
+    var views = [];
+    UI.api('/api/mandelbrot/views').then(function (res) {
+      if (res && res.views) {
+        views = res.views;
+      } else {
+        views = [
+          { id: 'full', name: '全景', cx: -0.5, cy: 0, zoom: 1 },
+          { id: 'seahorse', name: '海马谷', cx: -0.743643887, cy: 0.131825904, zoom: 200 },
+          { id: 'elephant', name: '大象谷', cx: 0.282, cy: 0.01, zoom: 120 },
+          { id: 'spiral', name: '螺旋', cx: -0.7269, cy: 0.1889, zoom: 80 },
+          { id: 'triple', name: '三叉', cx: -1.25066, cy: 0.02012, zoom: 60 }
+        ];
+      }
+      for (var i = 0; i < views.length; i++) {
+        var o = document.createElement('option');
+        o.value = views[i].id;
+        o.textContent = views[i].name;
+        viewSel.appendChild(o);
+      }
+    });
+
+    /* ---------- 启动 ---------- */
+    compute();
+  })();
+  </script>
+</body>
+</html>

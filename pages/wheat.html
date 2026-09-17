@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>麦粒棋盘·指数爆炸 · Algo Playground</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script>window.__ALGO_ACTIVE__ = 'wheat.html';</script>
+</head>
+<body>
+  <main class="wrap">
+    <h1>🌾 麦粒棋盘 · 指数爆炸</h1>
+    <p class="sub">
+      典故：智者请国王在国际象棋第 1 格放 1 粒麦、第 2 格 2 粒、第 3 格 4 粒……
+      每格都是前一格的 2 倍，直到放满 64 格。国王满口答应，却不知这只是个陷阱。
+    </p>
+
+    <section class="card">
+      <div class="btnrow">
+        <button id="btnAuto">🌱 自动播到第 64 格</button>
+        <button id="btnStep" class="amber">🌾 手动播一格</button>
+        <button id="btnReset" class="secondary">♻️ 清空棋盘</button>
+        <span id="curState" style="color:#9aa3c0;font-size:14px;">当前第 0 格（还没开始）</span>
+      </div>
+      <div class="info-line">
+        <span id="srcTag" class="tag">数据源：本地</span>
+        <span class="info-line" style="margin-left:8px;">每粒小麦按 0.03 克估算</span>
+      </div>
+
+      <div style="display:flex;gap:22px;flex-wrap:wrap;align-items:flex-start;margin-top:16px;">
+        <div class="canvas-host" style="flex:1 1 340px;min-width:300px;">
+          <div id="board" style="display:grid;gap:3px;background:#0b0e1a;padding:6px;border-radius:8px;width:100%;"></div>
+        </div>
+        <div style="flex:1 1 300px;min-width:280px;">
+          <div class="card" style="margin:0;">
+            <h2>当前格子</h2>
+            <p id="bigNum" style="font-size:17px;word-break:break-all;">—</p>
+            <p class="info-line" id="thisGrain">尚未播种</p>
+          </div>
+          <div class="card" style="margin-top:12px;">
+            <h2>累计麦粒</h2>
+            <p id="totNum" style="font-size:19px;font-weight:700;color:#fbbf24;word-break:break-all;">0</p>
+            <p id="totAnalog" style="color:#9aa3c0;font-size:14px;"></p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>为什么可怕？——这就是"指数增长" O(2ⁿ)</h2>
+      <p>每格的麦粒数都是前一格的 <b>2 倍</b>。放到第 64 格时，全盘合计约 <b id="totalStr">—</b> 粒。</p>
+      <p>换算成重量：全球小麦年产量约 7.8 亿吨，而这一棋盘要的麦子约 <b id="grainW">—</b> 吨，
+        相当于全世界种上 <b id="yearsNeed">—</b> 年才够。</p>
+      <p class="info-line">
+        它揭示了算法里的核心概念——<b>时间复杂度</b>。指数级 O(2ⁿ) 前期增长平缓，
+        越过临界点后瞬间吞没一切，所以设计算法时要极力避免指数级运算。
+      </p>
+    </section>
+  </main>
+
+  <script src="../assets/js/nav.js"></script>
+  <script src="../assets/js/related.js"></script>
+  <script src="../assets/js/algo-core.js"></script>
+  <script src="../assets/js/ui.js"></script>
+  <script>
+  (function () {
+    "use strict";
+    var N = 64;
+    var boardHost = document.getElementById('board');
+    var bigNum = document.getElementById('bigNum');
+    var thisGrain = document.getElementById('thisGrain');
+    var totNum = document.getElementById('totNum');
+    var totAnalog = document.getElementById('totAnalog');
+    var totalStr = document.getElementById('totalStr');
+    var grainW = document.getElementById('grainW');
+    var yearsNeed = document.getElementById('yearsNeed');
+    var curState = document.getElementById('curState');
+    var srcTag = document.getElementById('srcTag');
+    var btnStep = document.getElementById('btnStep');
+    var btnAuto = document.getElementById('btnAuto');
+    var btnReset = document.getElementById('btnReset');
+
+    var data = [];       // 后端或本地生成的棋盘数据
+    var cur = 0;         // 已放置到的格子数
+    var timer = null;
+
+    /* ---------- 建棋盘 DOM ---------- */
+    function buildBoard() {
+      boardHost.innerHTML = '';
+      boardHost.style.gridTemplateColumns = 'repeat(8, 1fr)';
+      for (var i = 1; i <= N; i++) {
+        var d = document.createElement('div');
+        d.style.aspectRatio = '1';
+        d.style.borderRadius = '4px';
+        d.style.display = 'flex';
+        d.style.alignItems = 'center';
+        d.style.justifyContent = 'center';
+        d.style.fontSize = '9px';
+        d.style.overflow = 'hidden';
+        d.setAttribute('data-idx', String(i));
+        d.textContent = String(i);
+        boardHost.appendChild(d);
+      }
+    }
+
+    /* ---------- 绘制 ---------- */
+    function paint() {
+      var items = boardHost.children;
+      for (var i = 0; i < items.length; i++) {
+        var idx = i + 1;
+        var d = items[i];
+        var row = data[i];
+        if (idx <= cur && row) {
+          var heat = (idx - 1) / (N - 1);
+          var r = Math.min(255, 200 + Math.floor(55 * heat));
+          var g = Math.max(90, 230 - Math.floor(150 * heat));
+          var b = Math.max(40, 120 - Math.floor(90 * heat));
+          d.style.background = 'rgb(' + r + ',' + g + ',' + b + ')';
+          d.style.border = '1px solid rgba(255,255,255,0.35)';
+          d.style.color = '#1c1400';
+          d.textContent = (idx === 1) ? '1'
+            : ((idx <= 12 || idx >= N - 1 || idx % 8 === 0) ? row.grain_str : '');
+        } else {
+          d.style.background = '#151a2c';
+          d.style.border = '1px solid #27304b';
+          d.style.color = '#9aa3c0';
+          d.textContent = String(idx);
+        }
+      }
+    }
+
+    /* ---------- 统计更新 ---------- */
+    function updateStats() {
+      paint();
+      if (cur === 0) {
+        bigNum.textContent = '—';
+        thisGrain.textContent = '尚未播种';
+        totNum.textContent = '0';
+        totAnalog.textContent = '';
+        curState.textContent = '当前第 0 格（还没开始）';
+        return;
+      }
+      var row = data[cur - 1];
+      bigNum.textContent = row.grain;
+      thisGrain.textContent = '本格需 ' + row.grain + ' 粒麦';
+
+      var last = data[cur - 1];
+      totNum.textContent = last.cumulative;
+      curState.textContent = '当前第 ' + cur + ' 格';
+
+      if (cur >= 40) {
+        var tons = Number(last.cumulative) * 0.03 / 1000000;
+        totAnalog.textContent = '≈ ' + UI.shortNum(Math.floor(tons)) + ' 吨小麦，' +
+          '约合全球 ' + UI.shortNum(Math.floor(tons / 780000000)) + ' 年的产量';
+      } else {
+        totAnalog.textContent = '还早——播到第 40 格后你会看到数字开始失控 ↗';
+      }
+    }
+
+    /* ---------- 放置 ---------- */
+    function placeOne() {
+      if (cur >= N) return false;
+      cur++;
+      updateStats();
+      return true;
+    }
+    function stopAuto() {
+      if (timer) { clearInterval(timer); timer = null; }
+      btnAuto.textContent = '🌱 自动播到第 64 格';
+    }
+    function startAuto() {
+      stopAuto();
+      btnAuto.textContent = '⏹ 停止';
+      timer = setInterval(function () {
+        for (var k = 0; k < 6 && cur < N; k++) placeOne();
+        if (cur >= N) stopAuto();
+      }, 40);
+    }
+
+    btnStep.addEventListener('click', function () { stopAuto(); placeOne(); });
+    btnAuto.addEventListener('click', function () { if (timer) stopAuto(); else startAuto(); });
+    btnReset.addEventListener('click', function () { stopAuto(); cur = 0; updateStats(); });
+
+    /* ---------- 加载数据（后端优先） ---------- */
+    function loadData() {
+      UI.api('/api/wheat/board?cells=' + N).then(function (res) {
+        if (res && res.rows) {
+          srcTag.textContent = '数据源：后端 API';
+          data = res.rows;
+          finishStatic(res);
+        } else {
+          srcTag.textContent = '数据源：本地兜底';
+          var local = AlgoCore.buildWheatBoard(N);
+          data = local.rows.map(function (r) {
+            return { grain: r.grain, grain_str: r.grain_str, cumulative: r.cumulative };
+          });
+          finishStatic(local);
+        }
+        buildBoard();
+        updateStats();
+      });
+    }
+    function finishStatic(res) {
+      totalStr.textContent = res.total_grain;
+      var tons = Number(res.total_grain) * 0.03 / 1000000;
+      grainW.textContent = UI.shortNum(Math.floor(tons));
+      yearsNeed.textContent = UI.shortNum(Math.floor(tons / 780000000));
+    }
+
+    buildBoard();
+    loadData();
+  })();
+  </script>
+</body>
+</html>

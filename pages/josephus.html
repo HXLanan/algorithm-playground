@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>约瑟夫环 · Algo Playground</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script>window.__ALGO_ACTIVE__ = 'josephus.html';</script>
+</head>
+<body>
+  <main class="wrap">
+    <h1>⭕ 约瑟夫环</h1>
+    <p class="sub">
+      n 个人围成一圈，从 1 号开始报数，每报到第 k 个人就<b>出列</b>，
+      然后下一个人重新从 1 报数。求出列顺序——以及最后活下来的是谁。
+    </p>
+
+    <section class="card">
+      <div class="btnrow">
+        <span class="tag">人数 n</span>
+        <input id="nInput" type="number" value="12" min="2" max="100" style="width:80px;background:#232a45;color:#e6e9f5;border:1px solid #2e3654;border-radius:8px;padding:7px 10px;">
+        <span class="tag">报数 k</span>
+        <input id="kInput" type="number" value="3" min="1" max="50" style="width:80px;background:#232a45;color:#e6e9f5;border:1px solid #2e3654;border-radius:8px;padding:7px 10px;">
+        <button id="btnPlay">▶ 播放出列过程</button>
+        <button id="btnStep" class="amber">⏭ 下一步</button>
+        <button id="btnReset" class="secondary">♻️ 重置</button>
+        <span id="srcTag" class="tag">数据源：本地</span>
+      </div>
+      <div class="canvas-host" style="margin-top:14px;">
+        <canvas id="cv" width="620" height="620"></canvas>
+      </div>
+      <p class="info-line" id="msg" style="color:#fbbf24;font-weight:600;"></p>
+      <p class="info-line" id="stats"></p>
+      <p class="info-line" id="orderView" style="word-break:break-all;"></p>
+    </section>
+
+    <section class="card-grid">
+      <div class="card">
+        <h2>模拟法：直观但慢</h2>
+        <p>用一个列表模拟圆圈：每次算出"下一个出列者"的下标，
+           移除它，从该位置继续数。</p>
+        <p class="info-line">复杂度 O(n·k)（或 O(n²) 若用数组删除）。
+           n=10 万时就会明显变慢。</p>
+      </div>
+      <div class="card">
+        <h2>数学法：一行递推搞定</h2>
+        <p style="font-family:monospace;background:#0b0e1a;padding:10px;border-radius:8px;font-size:13px;color:#5eead4;">
+          f(1) = 0<br>
+          f(n) = (f(n-1) + k) % n<br>
+          答案 = f(n) + 1
+        </p>
+        <p id="formulaInfo" class="info-line"></p>
+        <p class="info-line"><b>为什么成立？</b>删掉一个人后，问题变成 n-1 人的同类问题，
+           但编号起点向前移动了 k 位。把"新编号"映射回"旧编号"就得到这个式子。</p>
+      </div>
+    </section>
+  </main>
+
+  <script src="../assets/js/nav.js"></script>
+  <script src="../assets/js/related.js"></script>
+  <script src="../assets/js/algo-core-ext.js"></script>
+  <script src="../assets/js/ui.js"></script>
+  <script>
+  (function () {
+    "use strict";
+    var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+    var nInput = document.getElementById('nInput'), kInput = document.getElementById('kInput');
+    var btnPlay = document.getElementById('btnPlay'), btnStep = document.getElementById('btnStep');
+    var btnReset = document.getElementById('btnReset');
+    var msg = document.getElementById('msg'), statsEl = document.getElementById('stats');
+    var orderView = document.getElementById('orderView'), srcTag = document.getElementById('srcTag');
+    var formulaInfo = document.getElementById('formulaInfo');
+
+    var W = 620, H = 620, CX = W / 2, CY = H / 2, RAD = 240;
+    var n = 12, k = 3;
+    var people = [];        // 剩余的人
+    var outOrder = [];
+    var frames = [];
+    var curFrame = 0;
+    var idx = 0;
+    var timer = null;
+    var survivor = null;
+
+    function posOf(i, total) {
+      var ang = -Math.PI / 2 + 2 * Math.PI * i / total;
+      return [CX + RAD * Math.cos(ang), CY + RAD * Math.sin(ang)];
+    }
+
+    /* ---------- 绘制 ---------- */
+    function draw() {
+      ctx.clearRect(0, 0, W, H);
+
+      // 已出列的人（外圈灰点）
+      var gone = outOrder.length;
+      var total = people.length + gone;
+
+      // 画剩余的人
+      var N = people.length;
+      for (var i = 0; i < N; i++) {
+        var p = posOf(i, Math.max(1, N));
+        var isCur = (outOrder.length < total) && (i === idx && N > 0);
+        var r = isCur ? 26 : 22;
+
+        // 指向当前报数者的箭头
+        if (isCur) {
+          var ang = -Math.PI / 2 + 2 * Math.PI * i / Math.max(1, N);
+          var ax = CX + (RAD - 48) * Math.cos(ang);
+          var ay = CY + (RAD - 48) * Math.sin(ang);
+          ctx.fillStyle = '#fbbf24';
+          ctx.beginPath();
+          ctx.arc(ax, ay, 6, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        ctx.beginPath();
+        ctx.arc(p[0], p[1], r, 0, Math.PI * 2);
+        ctx.fillStyle = isCur ? '#fbbf24' : '#2b3350';
+        ctx.fill();
+        ctx.strokeStyle = isCur ? '#fbbf24' : '#4a5578';
+        ctx.lineWidth = 2.5;
+        ctx.stroke();
+
+        ctx.fillStyle = isCur ? '#0b0e1a' : '#e6e9f5';
+        ctx.font = 'bold 15px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(String(people[i]), p[0], p[1]);
+      }
+
+      // 中心信息
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#5eead4';
+      ctx.font = 'bold 22px sans-serif';
+      if (survivor !== null) {
+        ctx.fillText('🎉 幸存者', CX, CY - 26);
+        ctx.fillStyle = '#fbbf24';
+        ctx.font = 'bold 44px sans-serif';
+        ctx.fillText(String(survivor), CX, CY + 22);
+      } else {
+        ctx.fillText('剩余 ' + people.length + ' 人', CX, CY - 14);
+        ctx.fillStyle = '#9aa3c0';
+        ctx.font = '15px sans-serif';
+        ctx.fillText('已出列 ' + outOrder.length + ' 人', CX, CY + 20);
+      }
+    }
+
+    function updateStats() {
+      statsEl.textContent = 'n = ' + n + '　k = ' + k + '　｜　已出列 ' +
+                            outOrder.length + ' / ' + n + '　｜　剩余 ' + people.length + ' 人';
+      if (outOrder.length) {
+        orderView.textContent = '出列顺序：' + outOrder.join(' → ');
+      }
+    }
+
+    /* ---------- 模拟 ---------- */
+    function buildSim() {
+      people = [];
+      for (var i = 1; i <= n; i++) people.push(i);
+      outOrder = [];
+      idx = 0;
+      survivor = null;
+      curFrame = 0;
+      frames = [];
+    }
+
+    function stepOnce() {
+      if (!people.length) return false;
+      idx = (idx + k - 1) % people.length;
+      var out = people.splice(idx, 1)[0];
+      outOrder.push(out);
+      if (people.length === 0) {
+        survivor = out;
+      } else if (idx >= people.length) {
+        idx = 0;
+      }
+      return true;
+    }
+
+    function stopPlay() { if (timer) { clearInterval(timer); timer = null; } btnPlay.textContent = '▶ 播放出列过程'; }
+    function play() {
+      if (timer) { stopPlay(); return; }
+      if (!people.length) { reset(); }
+      btnPlay.textContent = '⏸ 暂停';
+      timer = setInterval(function () {
+        if (!stepOnce()) { stopPlay(); return; }
+        draw(); updateStats();
+        if (!people.length) { stopPlay(); showFormula(); }
+      }, 620);
+    }
+    function reset() {
+      stopPlay();
+      buildSim();
+      draw(); updateStats();
+      orderView.textContent = '';
+      msg.textContent = '已重置。点 ▶ 看人们一个个出列。';
+    }
+
+    btnPlay.addEventListener('click', play);
+    btnStep.addEventListener('click', function () {
+      stopPlay();
+      if (stepOnce()) { draw(); updateStats(); if (!people.length) showFormula(); }
+    });
+    btnReset.addEventListener('click', reset);
+    nInput.addEventListener('change', function () {
+      n = Math.min(100, Math.max(2, parseInt(nInput.value, 10) || 12));
+      nInput.value = n;
+      RAD = n > 60 ? 250 : (n > 30 ? 245 : 240);
+      reset();
+    });
+    kInput.addEventListener('change', function () {
+      k = Math.min(50, Math.max(1, parseInt(kInput.value, 10) || 3));
+      kInput.value = k;
+      reset();
+    });
+
+    /* ---------- 公式对比 ---------- */
+    function showFormula() {
+      UI.api('/api/josephus/formula?n=' + n + '&k=' + k).then(function (res) {
+        if (res && res.survivor !== undefined) {
+          msg.textContent = '数学递推给出的幸存者 = ' + res.survivor +
+                            '；模拟结果 = ' + survivor + '　→　' +
+                            (res.survivor === survivor ? '✅ 完全一致' : '❌ 不一致');
+        } else {
+          var f = AlgoExt.josephusFormula(n, k);
+          msg.textContent = '数学递推给出的幸存者 = ' + f.survivor +
+                            '；模拟结果 = ' + survivor + '　→　' +
+                            (f.survivor === survivor ? '✅ 完全一致' : '❌ 不一致');
+        }
+      });
+    }
+
+    /* ---------- 启动 ---------- */
+    buildSim();
+    draw();
+    updateStats();
+
+    UI.api('/api/josephus/formula?n=100000&k=3').then(function (res) {
+      var v = (res && res.survivor !== undefined) ? res.survivor : AlgoExt.josephusFormula(100000, 3).survivor;
+      formulaInfo.textContent = '威力展示：n = 100000、k = 3 时，' +
+        '递推法瞬间算出幸存者是 ' + v + '；而模拟法要进行 10 万次删除，慢得多。';
+    });
+  })();
+  </script>
+</body>
+</html>

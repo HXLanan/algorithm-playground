@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>二叉堆与优先队列 · Algo Playground</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script>window.__ALGO_ACTIVE__ = 'heap.html';</script>
+</head>
+<body>
+  <main class="wrap">
+    <h1>⛰️ 二叉堆与优先队列</h1>
+    <p class="sub">
+      堆是一棵"完全二叉树"，且每个父节点都 ≤ 它的孩子（小根堆）。
+      神奇的是：它<b>用一个数组就能表示</b>，不需要任何指针。
+      点"插入"或"弹出堆顶"看它如何上浮/下沉。
+    </p>
+
+    <section class="card">
+      <div class="btnrow">
+        <span class="tag">初始元素</span>
+        <input id="valsInput" type="text" value="5,2,8,1,9,3,7"
+               style="width:220px;background:#232a45;color:#e6e9f5;border:1px solid #2e3654;border-radius:8px;padding:7px 10px;font-family:monospace;">
+        <button id="btnReset">🌱 重建堆</button>
+        <button id="btnRandom" class="secondary">🎲 随机</button>
+        <span class="tag">插入值</span>
+        <input id="pushInput" type="number" value="0" style="width:80px;background:#232a45;color:#e6e9f5;border:1px solid #2e3654;border-radius:8px;padding:7px 10px;">
+        <button id="btnPush" class="amber">⬆️ 插入</button>
+        <button id="btnPop" class="pink">⬇️ 弹出堆顶</button>
+        <span id="srcTag" class="tag">数据源：本地</span>
+      </div>
+      <div class="canvas-host" style="margin-top:14px;">
+        <canvas id="cv" width="900" height="460"></canvas>
+      </div>
+      <p class="info-line" id="msg" style="color:#fbbf24;font-weight:600;"></p>
+      <p class="info-line" id="stats"></p>
+    </section>
+
+    <section class="card-grid">
+      <div class="card">
+        <h2>数组 ↔ 树的对应关系</h2>
+        <p>堆用数组 <code>[1, 2, 3, 5, 9, 8, 7]</code> 存储，节点 <b>i</b> 的：<br>
+           · 左孩子 = <code>2i + 1</code><br>
+           · 右孩子 = <code>2i + 2</code><br>
+           · 父节点 = <code>(i-1) / 2</code></p>
+        <p class="info-line">所以完全不需要指针！这份"数组即树"的紧凑性，
+           让堆在内存和缓存上都比链式结构高效得多。</p>
+      </div>
+      <div class="card">
+        <h2>两个核心操作，都是 O(log n)</h2>
+        <p><b>上浮 sift-up</b>：新元素放末尾，不断与父节点比较，比父小就交换——最多走树高那么多层。</p>
+        <p><b>下沉 sift-down</b>：取出堆顶后把末尾元素放到顶部，不断与较小的孩子比较、交换。</p>
+        <p class="info-line">堆只保证"根是最小值"，不保证整体有序——
+           所以取最小 O(1)，但找第 5 小需要弹出 5 次。</p>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>堆能干什么？</h2>
+      <p>🔹 <b>优先队列</b>：任务调度、Dijkstra 找最近节点、合并 K 个有序链表</p>
+      <p>🔹 <b>Top-K 问题</b>：求"最大的 K 个数"，只需维护一个大小为 K 的小根堆，O(n log K)</p>
+      <p>🔹 <b>堆排序</b>：全部入堆再依次弹出，得到 O(n log n) 的排序（不需要额外数组）</p>
+      <p>🔹 <b>中位数流</b>：一个大根堆 + 一个小根堆，动态求中位数</p>
+    </section>
+  </main>
+
+  <script src="../assets/js/nav.js"></script>
+  <script src="../assets/js/related.js"></script>
+  <script src="../assets/js/algo-core-ext.js"></script>
+  <script src="../assets/js/ui.js"></script>
+  <script>
+  (function () {
+    "use strict";
+    var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+    var valsInput = document.getElementById('valsInput');
+    var pushInput = document.getElementById('pushInput');
+    var btnReset = document.getElementById('btnReset'), btnRandom = document.getElementById('btnRandom');
+    var btnPush = document.getElementById('btnPush'), btnPop = document.getElementById('btnPop');
+    var msg = document.getElementById('msg'), statsEl = document.getElementById('stats');
+    var srcTag = document.getElementById('srcTag');
+
+    var W = 900, H = 460;
+    var heap = [];            // 数组表示的堆
+    var highlight = { i: -1, j: -1 };
+
+    /* ---------- 绘制 ---------- */
+    function levelOf(i) { return Math.floor(Math.log2(i + 1)); }
+    function posOf(i) {
+      var lvl = levelOf(i);
+      var first = Math.pow(2, lvl) - 1;
+      var idxInLevel = i - first;
+      var countInLevel = Math.pow(2, lvl);
+      var lvlH = Math.min(96, (H - 110) / 5);
+      var y = 66 + lvl * lvlH;
+      var spanW = W - 120;
+      var x;
+      if (countInLevel === 1) { x = W / 2; }
+      else {
+        var stepW = spanW / (countInLevel - 1 || 1);
+        x = 60 + idxInLevel * stepW;
+        // 让下一层的节点落在父节点之间
+        var parentStep = spanW / Math.max(1, countInLevel / 2);
+        x = 60 + (idxInLevel + 0.5) * parentStep;
+      }
+      return [x, y];
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, W, H);
+      if (!heap.length) {
+        ctx.fillStyle = '#5d6a92';
+        ctx.font = '15px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('堆是空的', W / 2, H / 2);
+        return;
+      }
+
+      // 画边
+      for (var i = 0; i < heap.length; i++) {
+        var p = posOf(i);
+        var l = 2 * i + 1, r = 2 * i + 2;
+        [l, r].forEach(function (c) {
+          if (c >= heap.length) return;
+          var cp = posOf(c);
+          ctx.strokeStyle = 'rgba(90,105,150,0.55)';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(p[0], p[1]);
+          ctx.lineTo(cp[0], cp[1]);
+          ctx.stroke();
+        });
+      }
+
+      // 画节点
+      for (var k = 0; k < heap.length; k++) {
+        var pp = posOf(k);
+        var isI = k === highlight.i, isJ = k === highlight.j;
+        var isRoot = k === 0;
+        var rad = 24;
+
+        ctx.beginPath();
+        ctx.arc(pp[0], pp[1], rad, 0, Math.PI * 2);
+        ctx.fillStyle = isI ? '#f472b6' : (isJ ? '#fbbf24' : (isRoot ? '#5eead4' : '#2b3350'));
+        ctx.fill();
+        ctx.strokeStyle = isI ? '#f472b6' : (isJ ? '#fbbf24' : '#4a5578');
+        ctx.lineWidth = 2.5;
+        ctx.stroke();
+
+        ctx.fillStyle = (isI || isJ || isRoot) ? '#0b0e1a' : '#e6e9f5';
+        ctx.font = 'bold 16px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(String(heap[k]), pp[0], pp[1]);
+
+        // 下标
+        ctx.fillStyle = '#5d6a92';
+        ctx.font = '10px sans-serif';
+        ctx.fillText('[' + k + ']', pp[0], pp[1] + 36);
+      }
+
+      // 底部数组表示
+      if (heap.length <= 20) {
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'alphabetic';
+        ctx.fillStyle = '#9aa3c0';
+        ctx.font = '13px sans-serif';
+        ctx.fillText('数组表示：', 30, H - 26);
+        var x0 = 108;
+        for (var m = 0; m < heap.length; m++) {
+          ctx.fillStyle = (m === highlight.i) ? '#f472b6' : '#232a45';
+          ctx.fillRect(x0 + m * 38, H - 42, 34, 26);
+          ctx.fillStyle = (m === highlight.i) ? '#0b0e1a' : '#cfd8f0';
+          ctx.font = 'bold 13px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText(String(heap[m]), x0 + m * 38 + 17, H - 24);
+        }
+      }
+    }
+
+    function updateStats(text) {
+      statsEl.textContent = '堆大小 ' + heap.length + '　｜　数组：[' + heap.join(', ') + ']';
+      if (text) msg.textContent = text;
+    }
+
+    /* ---------- 操作（本地实现，带高亮） ---------- */
+    function localPush(v) {
+      heap.push(v);
+      var i = heap.length - 1;
+      highlight = { i: i, j: Math.floor((i - 1) / 2) };
+      draw();
+      var steps = [];
+      while (i > 0) {
+        var p = Math.floor((i - 1) / 2);
+        if (heap[i] < heap[p]) {
+          var t = heap[i]; heap[i] = heap[p]; heap[p] = t;
+          steps.push('与父节点交换');
+          i = p;
+        } else break;
+      }
+      highlight = { i: -1, j: -1 };
+      draw();
+      updateStats('插入 ' + v + '：放到数组末尾，然后一路上浮' +
+                  (steps.length ? '（交换了 ' + steps.length + ' 次）' : '（无需上浮，已满足堆序）'));
+    }
+    function localPop() {
+      if (!heap.length) { updateStats('堆已空，无法弹出'); return; }
+      var top = heap[0];
+      var last = heap.pop();
+      if (heap.length) {
+        heap[0] = last;
+        var i = 0;
+        while (true) {
+          var l = 2 * i + 1, r = 2 * i + 2, sm = i;
+          if (l < heap.length && heap[l] < heap[sm]) sm = l;
+          if (r < heap.length && heap[r] < heap[sm]) sm = r;
+          if (sm === i) break;
+          var t = heap[i]; heap[i] = heap[sm]; heap[sm] = t;
+          i = sm;
+        }
+      }
+      highlight = { i: -1, j: -1 };
+      draw();
+      updateStats('弹出堆顶 ' + top + '：把末尾元素放到顶部，然后下沉调整');
+    }
+
+    function renderFromBackend(steps, finalHeap) {
+      // 后端返回的步骤也带 heap 快照，这里简单地重建最终状态
+      if (finalHeap && finalHeap.length) {
+        heap = finalHeap.slice();
+      }
+      draw();
+    }
+
+    function rebuild() {
+      var vals = valsInput.value.split(/[,，\s]+/).map(function (s) { return parseInt(s, 10); })
+                 .filter(function (v) { return !isNaN(v); }).slice(0, 15);
+      if (!vals.length) vals = [5, 2, 8, 1, 9];
+      UI.api('/api/heap/demo', { method: 'POST', body: { values: vals, pops: 0 } })
+        .then(function (res) {
+          if (res && res.heapAfterPush) {
+            srcTag.textContent = '数据源：后端 API';
+            heap = res.heapAfterPush.slice();
+          } else {
+            srcTag.textContent = '数据源：本地兜底';
+            heap = [];
+            vals.forEach(function (v) { heap.push(v); });
+            // 本地建堆
+            for (var i = Math.floor(heap.length / 2) - 1; i >= 0; i--) {
+              var idx = i;
+              while (true) {
+                var l = 2 * idx + 1, r = 2 * idx + 2, sm = idx;
+                if (l < heap.length && heap[l] < heap[sm]) sm = l;
+                if (r < heap.length && heap[r] < heap[sm]) sm = r;
+                if (sm === idx) break;
+                var t = heap[idx]; heap[idx] = heap[sm]; heap[sm] = t;
+                idx = sm;
+              }
+            }
+          }
+          highlight = { i: -1, j: -1 };
+          draw();
+          updateStats('重建完成：' + vals.length + ' 个元素已调整为合法小根堆（根 = 最小值 ' + heap[0] + '）');
+        });
+    }
+
+    btnReset.addEventListener('click', rebuild);
+    btnRandom.addEventListener('click', function () {
+      var vals = [];
+      for (var i = 0; i < 7; i++) vals.push(1 + Math.floor(Math.random() * 20));
+      valsInput.value = vals.join(',');
+      rebuild();
+    });
+    btnPush.addEventListener('click', function () {
+      var v = parseInt(pushInput.value, 10);
+      if (isNaN(v)) v = Math.floor(Math.random() * 20);
+      localPush(v);
+    });
+    btnPop.addEventListener('click', localPop);
+
+    rebuild();
+  })();
+  </script>
+</body>
+</html>

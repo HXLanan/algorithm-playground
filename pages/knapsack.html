@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>0-1 背包问题 · Algo Playground</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script>window.__ALGO_ACTIVE__ = 'knapsack.html';</script>
+</head>
+<body>
+  <main class="wrap">
+    <h1>🎒 0-1 背包问题</h1>
+    <p class="sub">
+      背包有固定容量，每件物品有重量和价值，<b>每件只能选或不选</b>。
+      求能装下的最大总价值。这是<b>动态规划</b>最经典的入门题。
+    </p>
+
+    <section class="card">
+      <div class="btnrow">
+        <span class="tag">物品重量</span>
+        <input id="wInput" type="text" value="2,3,4,5"
+               style="width:150px;background:#232a45;color:#e6e9f5;border:1px solid #2e3654;border-radius:8px;padding:7px 10px;font-family:monospace;">
+        <span class="tag">物品价值</span>
+        <input id="vInput" type="text" value="3,4,5,6"
+               style="width:150px;background:#232a45;color:#e6e9f5;border:1px solid #2e3654;border-radius:8px;padding:7px 10px;font-family:monospace;">
+        <span class="tag">容量</span>
+        <input id="capInput" type="number" value="8" style="width:80px;background:#232a45;color:#e6e9f5;border:1px solid #2e3654;border-radius:8px;padding:7px 10px;">
+        <button id="btnSolve">🎯 求解</button>
+        <button id="btnRandom" class="secondary">🎲 随机</button>
+        <span id="srcTag" class="tag">数据源：本地</span>
+      </div>
+
+      <div class="card" style="margin-top:16px;background:#0b0e1a;">
+        <h2>DP 表格 <span style="font-size:13px;color:#9aa3c0;font-weight:400;">
+          （行 = 考虑前 i 件物品，列 = 背包容量 j）</span></h2>
+        <div style="overflow-x:auto;margin-top:10px;">
+          <div id="tableHost"></div>
+        </div>
+      </div>
+
+      <p class="info-line" id="resultView" style="font-size:17px;font-weight:700;color:#fbbf24;"></p>
+      <p class="info-line" id="pickedView"></p>
+    </section>
+
+    <section class="card-grid">
+      <div class="card">
+        <h2>状态转移方程</h2>
+        <p><code>dp[i][j]</code> = 只考虑前 i 件、容量 j 时的最大价值。</p>
+        <p style="font-family:monospace;background:#0b0e1a;padding:10px;border-radius:8px;font-size:13px;color:#5eead4;">
+          dp[i][j] = max(<br>
+          &nbsp;&nbsp;dp[i-1][j],&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;← 不选第 i 件<br>
+          &nbsp;&nbsp;dp[i-1][j-wᵢ] + vᵢ&nbsp;&nbsp;← 选（前提 j ≥ wᵢ）<br>
+          )
+        </p>
+        <p class="info-line">每次只比较"选"和"不选"两种决策，取更优的那个。
+           因为子问题的答案已经算好并存在表里，所以不用重复计算。</p>
+      </div>
+      <div class="card">
+        <h2>动态规划的核心思想</h2>
+        <p>① <b>定义状态</b>：用一个（或几个）下标描述子问题</p>
+        <p>② <b>找转移</b>：当前状态如何由更小的状态推出</p>
+        <p>③ <b>确定顺序</b>：保证计算 dp[i][j] 时，依赖的格子已经算好</p>
+        <p>④ <b>边界条件</b>：这里是"没有物品"或"容量为 0"时价值为 0</p>
+        <p class="info-line">暴力枚举是 2ⁿ 种组合；DP 把它压到 <b>O(n×W)</b>。
+           代价是需要一张表——<b>用空间换时间</b>，这是 DP 的通用套路。</p>
+      </div>
+    </section>
+  </main>
+
+  <script src="../assets/js/nav.js"></script>
+  <script src="../assets/js/related.js"></script>
+  <script src="../assets/js/algo-core-ext.js"></script>
+  <script src="../assets/js/ui.js"></script>
+  <script>
+  (function () {
+    "use strict";
+    var wInput = document.getElementById('wInput');
+    var vInput = document.getElementById('vInput');
+    var capInput = document.getElementById('capInput');
+    var btnSolve = document.getElementById('btnSolve'), btnRandom = document.getElementById('btnRandom');
+    var tableHost = document.getElementById('tableHost');
+    var resultView = document.getElementById('resultView');
+    var pickedView = document.getElementById('pickedView');
+    var srcTag = document.getElementById('srcTag');
+
+    function parseList(s) {
+      return s.split(/[,，\s]+/).map(function (x) { return parseInt(x, 10); })
+              .filter(function (x) { return !isNaN(x) && x > 0; }).slice(0, 12);
+    }
+
+    function renderTable(dp, weights, values, picked) {
+      var n = weights.length, cap = dp[0].length - 1;
+      var html = '<table style="border-collapse:collapse;font-family:monospace;font-size:13px;">';
+
+      // 表头
+      html += '<tr><th style="padding:6px 10px;color:#9aa3c0;border:1px solid #2e3654;">i \\ j</th>';
+      for (var j = 0; j <= cap; j++) {
+        html += '<th style="padding:6px 10px;color:#5eead4;border:1px solid #2e3654;background:#161b2e;">' + j + '</th>';
+      }
+      html += '</tr>';
+
+      for (var i = 0; i <= n; i++) {
+        html += '<tr>';
+        var label = i === 0 ? '0 (无物品)' : (i + ' (w=' + weights[i-1] + ',v=' + values[i-1] + ')');
+        html += '<th style="padding:6px 10px;color:#fbbf24;border:1px solid #2e3654;background:#161b2e;text-align:left;white-space:nowrap;">' + label + '</th>';
+        for (var jj = 0; jj <= cap; jj++) {
+          var v = dp[i][jj];
+          var isFinal = (i === n && jj === cap);
+          var isPicked = (i > 0 && picked.indexOf(i) >= 0);
+          var bg = isFinal ? '#34d399' : (isPicked && v > 0 ? 'rgba(251,191,36,0.25)' : '#1c2238');
+          var fg = isFinal ? '#0b0e1a' : '#e6e9f5';
+          html += '<td style="padding:6px 10px;text-align:center;border:1px solid #2e3654;background:' + bg + ';color:' + fg + ';' +
+                  (isFinal ? 'font-weight:700;' : '') + '">' + v + '</td>';
+        }
+        html += '</tr>';
+      }
+      html += '</table>';
+      tableHost.innerHTML = html;
+    }
+
+    function solve() {
+      var w = parseList(wInput.value);
+      var v = parseList(vInput.value);
+      var cap = parseInt(capInput.value, 10) || 8;
+
+      if (w.length !== v.length || !w.length) {
+        resultView.textContent = '⚠️ 重量与价值的数量必须一致且非空';
+        return;
+      }
+      if (cap > 60) cap = 60;
+
+      UI.api('/api/knapsack/solve', { method: 'POST', body: { weights: w, values: v, capacity: cap } })
+        .then(function (res) {
+          if (res && res.table) { srcTag.textContent = '数据源：后端 API'; }
+          else { srcTag.textContent = '数据源：本地兜底';
+                 res = AlgoExt.knapsackSolve(w, v, cap); }
+          // 本地兜底没有 pickedItems
+          var picked = res.picked || [];
+          renderTable(res.table, w, v, picked);
+
+          resultView.textContent = '🎯 最大价值 = ' + res.maxValue;
+          var items = picked.map(function (idx) {
+            return '第' + idx + '件(重' + w[idx-1] + ',值' + v[idx-1] + ')';
+          });
+          pickedView.textContent = items.length
+            ? '选中的物品：' + items.join('、') +
+              '　总重 ' + picked.reduce(function (s, i2) { return s + w[i2-1]; }, 0) + ' / ' + cap
+            : '一件都没选';
+        });
+    }
+
+    btnSolve.addEventListener('click', solve);
+    btnRandom.addEventListener('click', function () {
+      var n = 4, ws = [], vs = [];
+      for (var i = 0; i < n; i++) { ws.push(1 + Math.floor(Math.random() * 5)); vs.push(2 + Math.floor(Math.random() * 11)); }
+      wInput.value = ws.join(',');
+      vInput.value = vs.join(',');
+      capInput.value = 6 + Math.floor(Math.random() * 8);
+      solve();
+    });
+    [wInput, vInput, capInput].forEach(function (el) { el.addEventListener('change', solve); });
+
+    solve();
+  })();
+  </script>
+</body>
+</html>

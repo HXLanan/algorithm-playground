@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>排序算法可视化 · Algo Playground</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script>window.__ALGO_ACTIVE__ = 'sort.html';</script>
+</head>
+<body>
+  <main class="wrap">
+    <h1>🧱 排序算法可视化</h1>
+    <p class="sub">
+      柱高就是一个数。点 <b>▶ 开始排序</b> 看它们像气泡一样归位；
+      也可用 <b>⏭ 单步</b> 一帧帧看清每一次"比较 / 交换"。切换算法与柱数可对比三种写法的差异。
+    </p>
+
+    <section class="card">
+      <div class="btnrow">
+        <span class="tag">算法</span>
+        <select id="algoSel">
+          <option value="bubble">冒泡排序</option>
+          <option value="selection">选择排序</option>
+          <option value="insertion">插入排序</option>
+        </select>
+        <span class="tag">柱数</span>
+        <select id="sizeSel">
+          <option value="6">6 根柱</option>
+          <option value="10" selected>10 根柱</option>
+          <option value="16">16 根柱</option>
+          <option value="24">24 根柱</option>
+        </select>
+        <button id="btnShuffle" class="secondary">🔄 重新洗牌</button>
+        <button id="btnPlay">▶ 开始排序</button>
+        <button id="btnStep" class="amber">⏭ 单步</button>
+      </div>
+      <div class="info-line">
+        动画速度：<input type="range" id="speed" min="1" max="100" value="45" style="width:200px; vertical-align:middle;">
+        <span id="srcTag" class="tag" style="margin-left:10px;">数据源：本地</span>
+      </div>
+      <div class="canvas-host" style="margin-top:14px;">
+        <canvas id="cv" width="900" height="320"></canvas>
+      </div>
+      <p class="info-line" id="log"></p>
+      <p class="info-line" id="stats"></p>
+    </section>
+
+    <section class="card">
+      <h2>这三种排序各自在干什么？</h2>
+      <p>🔹 <b>冒泡排序</b>：从头到尾两两比较，把大的往右"冒"，一轮确定最右一位；若某轮无交换可提前结束。</p>
+      <p>🔹 <b>选择排序</b>：每轮挑出剩余里最小的推到最左，位置一个个被"钉死"。交换少、比较多。</p>
+      <p>🔹 <b>插入排序</b>：像整理扑克牌，把每张"新牌"插到前面已排好的牌里。</p>
+      <p class="info-line" style="color:#9aa3c0">
+        颜色示意：<span style="color:#fbbf24">■ 正在比较</span>
+        ｜ <span style="color:#f472b6">■ 本步写入/关注的那根</span>
+        ｜ <span style="color:#34d399">■ 排序完成</span>
+      </p>
+    </section>
+  </main>
+
+  <script src="../assets/js/nav.js"></script>
+  <script src="../assets/js/related.js"></script>
+  <script src="../assets/js/algo-core.js"></script>
+  <script src="../assets/js/ui.js"></script>
+  <script>
+  (function () {
+    "use strict";
+    var cv = document.getElementById('cv');
+    var ctx = cv.getContext('2d');
+    var algoSel = document.getElementById('algoSel');
+    var sizeSel = document.getElementById('sizeSel');
+    var speedEl = document.getElementById('speed');
+    var logEl = document.getElementById('log');
+    var statsEl = document.getElementById('stats');
+    var srcTag = document.getElementById('srcTag');
+    var btnPlay = document.getElementById('btnPlay');
+    var btnStep = document.getElementById('btnStep');
+    var btnShuffle = document.getElementById('btnShuffle');
+
+    var W = 900, H = 320, topPad = 30, baseline = H - 40;
+    var n = parseInt(sizeSel.value, 10);
+    var originSeq = [];
+    var sim = [];
+    var stepIdx = -1;
+    var running = false, timer = null, done = false, loading = false;
+    var hl = { a: -1, b: -1, mark: -1 };
+
+    function draw(list) {
+      ctx.clearRect(0, 0, W, H);
+      var maxV = 1;
+      for (var i = 0; i < list.length; i++) if (list[i] > maxV) maxV = list[i];
+      var span = baseline - topPad;
+      var slot = W / Math.max(1, list.length);
+
+      ctx.strokeStyle = '#435079';
+      ctx.beginPath(); ctx.moveTo(10, baseline + 0.5); ctx.lineTo(W - 10, baseline + 0.5); ctx.stroke();
+
+      for (var k = 0; k < list.length; k++) {
+        var h = span * (list[k] / maxV);
+        var x = k * slot + slot * 0.12;
+        var bw = slot * 0.76;
+        var y = baseline - h;
+        var col;
+        if (done) col = '#34d399';
+        else if (k === hl.a || k === hl.b) col = '#fbbf24';
+        else if (k === hl.mark) col = '#f472b6';
+        else col = '#5d73c0';
+
+        ctx.fillStyle = col;
+        ctx.fillRect(x, y, bw, h);
+
+        var dark = (col === '#fbbf24' || col === '#f472b6' || col === '#34d399');
+        ctx.fillStyle = dark ? '#0b0e1a' : '#e4ecff';
+        ctx.font = (slot > 58 ? 'bold 15px' : 'bold 11px') + ' sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(String(list[k]), x + bw / 2, y - 8);
+      }
+    }
+
+    function render() {
+      if (stepIdx < 0) {
+        hl = { a: -1, b: -1, mark: -1 };
+        draw(originSeq);
+        logEl.textContent = '已生成 ' + n + ' 根柱。点 ▶ 开始排序。';
+        statsEl.textContent = '比较 0 次 ｜ 写入/交换 0 次';
+        return;
+      }
+      var s = sim[stepIdx];
+      hl = { a: s.a, b: s.b, mark: s.mark };
+      draw(s.list);
+      logEl.textContent = '步骤 ' + (stepIdx + 1) + '/' + sim.length + '：' + s.desc;
+      statsEl.textContent = '比较 ' + s.c + ' 次 ｜ 写入/交换 ' + s.w + ' 次';
+    }
+
+    function buildSim(cb) {
+      var algo = algoSel.value;
+      UI.api('/api/sort/run', { method: 'POST', body: { array: originSeq, algo: algo } })
+        .then(function (res) {
+          if (res && res.steps) {
+            srcTag.textContent = '数据源：后端 API';
+            cb(res.steps);
+          } else {
+            srcTag.textContent = '数据源：本地兜底';
+            cb(AlgoCore.buildSortSteps(originSeq, algo).steps);
+          }
+        });
+    }
+
+    function resetData() {
+      stopAuto();
+      done = false;
+      loading = true;
+      sim = [];
+      btnPlay.disabled = true;
+      btnStep.disabled = true;
+      originSeq = AlgoCore.randomArray(n);
+      stepIdx = -1;
+      render();
+      buildSim(function (steps) {
+        sim = steps;
+        loading = false;
+        btnPlay.disabled = false;
+        btnStep.disabled = false;
+        if (stepIdx < 0) render();
+      });
+    }
+
+    function stopAuto() {
+      running = false;
+      if (timer) { clearInterval(timer); timer = null; }
+      btnPlay.textContent = '▶ 开始排序';
+    }
+    function startTimer() {
+      if (timer) clearInterval(timer);
+      var delay = Math.max(20, 1300 - parseInt(speedEl.value, 10) * 12);
+      timer = setInterval(tick, delay);
+    }
+    function tick() {
+      if (done) { stopAuto(); return; }
+      if (stepIdx + 1 >= sim.length) { finish(); return; }
+      stepIdx++;
+      render();
+    }
+    function finish() {
+      done = true;
+      hl = { a: -1, b: -1, mark: -1 };
+      if (sim.length) {
+        draw(sim[sim.length - 1].list);
+        var last = sim[sim.length - 1];
+        logEl.textContent = '✅ 排序完成！比较 ' + last.c + ' 次、写入/交换 ' + last.w + ' 次。';
+      }
+      stopAuto();
+    }
+    function togglePlay() {
+      if (loading) return;
+      if (done || !sim.length) { resetData(); return; }
+      if (running) { stopAuto(); return; }
+      running = true;
+      btnPlay.textContent = '⏸ 暂停';
+      startTimer();
+    }
+    function stepOnce() {
+      if (loading) return;
+      if (!sim.length) { resetData(); return; }
+      if (running) stopAuto();
+      if (done) return;
+      if (stepIdx + 1 >= sim.length) { finish(); return; }
+      stepIdx++;
+      render();
+    }
+
+    btnPlay.addEventListener('click', togglePlay);
+    btnStep.addEventListener('click', stepOnce);
+    btnShuffle.addEventListener('click', resetData);
+    sizeSel.addEventListener('change', function () {
+      n = parseInt(sizeSel.value, 10);
+      resetData();
+    });
+    algoSel.addEventListener('change', resetData);
+    speedEl.addEventListener('input', function () { if (running) startTimer(); });
+
+    resetData();
+  })();
+  </script>
+</body>
+</html>

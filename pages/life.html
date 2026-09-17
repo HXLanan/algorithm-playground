@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>康威生命游戏 · Algo Playground</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script>window.__ALGO_ACTIVE__ = 'life.html';</script>
+</head>
+<body>
+  <main class="wrap">
+    <h1>🦠 康威生命游戏</h1>
+    <p class="sub">
+      没有中央控制，只有三条局部规则，却能涌现出滑翔机、振荡子、甚至图灵完备的计算能力。
+      <b>点击格子</b>可以自己画图案，再点播放看它"活"起来。
+    </p>
+
+    <section class="card">
+      <div class="btnrow">
+        <button id="btnPlay">▶ 播放</button>
+        <button id="btnStep" class="amber">⏭ 单步</button>
+        <button id="btnClear" class="secondary">🧹 清空</button>
+        <button id="btnRandom" class="secondary">🎲 随机</button>
+        <span class="tag">经典图案</span>
+        <select id="patternSel">
+          <option value="">— 选择图案 —</option>
+          <option value="glider">滑翔机（会飞）</option>
+          <option value="blinker">闪烁器</option>
+          <option value="toad">蟾蜍</option>
+          <option value="beacon">信标</option>
+          <option value="block">方块（静止）</option>
+        </select>
+        <button id="btnPlace" class="pink">放置到中心</button>
+      </div>
+      <div class="info-line">
+        速度 <input type="range" id="speed" min="1" max="60" value="12" style="width:150px; vertical-align:middle;">
+        <span id="srcTag" class="tag" style="margin-left:10px;">数据源：本地</span>
+      </div>
+      <div class="canvas-host" style="margin-top:14px;">
+        <canvas id="cv" width="900" height="520" style="cursor:crosshair;"></canvas>
+      </div>
+      <p class="info-line" id="stats"></p>
+    </section>
+
+    <section class="card">
+      <h2>三条规则，一个世界</h2>
+      <p>① <b>孤独而死</b>：活细胞周围活邻居 &lt; 2 → 死亡。</p>
+      <p>② <b>存活</b>：活细胞周围有 2 或 3 个活邻居 → 继续活着。</p>
+      <p>③ <b>拥挤而死</b>：活细胞周围 &gt; 3 个活邻居 → 死亡。</p>
+      <p>④ <b>繁殖</b>：死细胞周围恰好有 3 个活邻居 → 复活。</p>
+      <p class="info-line">
+        神奇之处在于：<b>规则里没有任何"滑翔机"或"振荡"的概念</b>，但它们自发出现了——这就是<b>涌现</b>。
+        数学家已经证明，生命游戏是"图灵完备"的，理论上能计算任何可计算的东西。
+      </p>
+    </section>
+  </main>
+
+  <script src="../assets/js/nav.js"></script>
+  <script src="../assets/js/related.js"></script>
+  <script src="../assets/js/algo-core-ext.js"></script>
+  <script src="../assets/js/ui.js"></script>
+  <script>
+  (function () {
+    "use strict";
+    var cv = document.getElementById('cv');
+    var ctx = cv.getContext('2d');
+    var btnPlay = document.getElementById('btnPlay');
+    var btnStep = document.getElementById('btnStep');
+    var btnClear = document.getElementById('btnClear');
+    var btnRandom = document.getElementById('btnRandom');
+    var btnPlace = document.getElementById('btnPlace');
+    var patternSel = document.getElementById('patternSel');
+    var speedEl = document.getElementById('speed');
+    var statsEl = document.getElementById('stats');
+    var srcTag = document.getElementById('srcTag');
+
+    var ROWS = 40, COLS = 70;
+    var CELL = Math.floor(Math.min(cv.width / COLS, cv.height / ROWS));
+    var grid = [];
+    var generation = 0;
+    var popHistory = [];
+    var timer = null;
+    var useBackend = false;
+
+    function emptyGrid() {
+      var g = [];
+      for (var r = 0; r < ROWS; r++) { var row = []; for (var c = 0; c < COLS; c++) row.push(0); g.push(row); }
+      return g;
+    }
+
+    /* ---------- 绘制 ---------- */
+    function draw() {
+      ctx.fillStyle = '#0b0e1a';
+      ctx.fillRect(0, 0, cv.width, cv.height);
+      var w = COLS * CELL, h = ROWS * CELL;
+      var ox = (cv.width - w) / 2, oy = (cv.height - h) / 2;
+
+      for (var r = 0; r < ROWS; r++) {
+        for (var c = 0; c < COLS; c++) {
+          var x = ox + c * CELL, y = oy + r * CELL;
+          if (grid[r][c]) {
+            // 活细胞：按"年龄"渐变（刚活的亮，老的暗）
+            var hue = 160 + (r + c) % 40;
+            ctx.fillStyle = 'hsl(' + hue + ', 75%, ' + (58 + (r * 7 + c * 3) % 12) + '%)';
+            ctx.fillRect(x + 0.5, y + 0.5, CELL - 1, CELL - 1);
+          } else {
+            ctx.fillStyle = 'rgba(90,105,150,0.10)';
+            ctx.fillRect(x + 0.5, y + 0.5, CELL - 1, CELL - 1);
+          }
+        }
+      }
+    }
+
+    function updateStats() {
+      var alive = 0;
+      for (var r = 0; r < ROWS; r++) for (var c = 0; c < COLS; c++) alive += grid[r][c];
+      statsEl.textContent = '第 ' + generation + ' 代 ｜ 存活细胞 ' + alive +
+        ' 个 ｜ 最近人口：' + popHistory.slice(-8).join(' → ');
+    }
+
+    /* ---------- 演化（后端优先） ---------- */
+    function evolve(generations) {
+      UI.api('/api/life/evolve', { method: 'POST', body: { grid: grid, generations: generations } })
+        .then(function (res) {
+          if (res && res.grid) {
+            srcTag.textContent = '数据源：后端 API';
+            grid = res.grid;
+            generation += generations;
+            popHistory = popHistory.concat(res.population.slice(1));
+          } else {
+            srcTag.textContent = '数据源：本地兜底';
+            var r = AlgoExt.lifeRun(grid, generations);
+            grid = r.grid;
+            generation += generations;
+            popHistory = popHistory.concat(r.population.slice(1));
+          }
+          draw();
+          updateStats();
+        });
+    }
+
+    function stop() {
+      if (timer) { clearInterval(timer); timer = null; }
+      btnPlay.textContent = '▶ 播放';
+    }
+    function toggle() {
+      if (timer) { stop(); return; }
+      btnPlay.textContent = '⏸ 暂停';
+      var delay = Math.max(30, 620 - parseInt(speedEl.value, 10) * 9);
+      timer = setInterval(function () { evolve(1); }, delay);
+    }
+
+    /* ---------- 网格交互 ---------- */
+    function canvasToCell(ev) {
+      var rect = cv.getBoundingClientRect();
+      var scaleX = cv.width / rect.width, scaleY = cv.height / rect.height;
+      var mx = (ev.clientX - rect.left) * scaleX;
+      var my = (ev.clientY - rect.top) * scaleY;
+      var w = COLS * CELL, h = ROWS * CELL;
+      var ox = (cv.width - w) / 2, oy = (cv.height - h) / 2;
+      var c = Math.floor((mx - ox) / CELL), r = Math.floor((my - oy) / CELL);
+      if (r < 0 || r >= ROWS || c < 0 || c >= COLS) return null;
+      return { r: r, c: c };
+    }
+    var painting = false, paintVal = 1;
+    cv.addEventListener('mousedown', function (ev) {
+      var p = canvasToCell(ev); if (!p) return;
+      painting = true;
+      paintVal = grid[p.r][p.c] ? 0 : 1;    // 拖动时统一涂成相反状态
+      grid[p.r][p.c] = paintVal;
+      draw(); updateStats();
+    });
+    cv.addEventListener('mousemove', function (ev) {
+      if (!painting) return;
+      var p = canvasToCell(ev); if (!p) return;
+      if (grid[p.r][p.c] !== paintVal) { grid[p.r][p.c] = paintVal; draw(); updateStats(); }
+    });
+    window.addEventListener('mouseup', function () { painting = false; });
+
+    /* ---------- 按钮 ---------- */
+    btnPlay.addEventListener('click', toggle);
+    btnStep.addEventListener('click', function () { stop(); evolve(1); });
+    btnClear.addEventListener('click', function () {
+      stop(); grid = emptyGrid(); generation = 0; popHistory = []; draw(); updateStats();
+    });
+    btnRandom.addEventListener('click', function () {
+      stop();
+      grid = AlgoExt.lifeRandom(ROWS, COLS, 0.28);
+      generation = 0; popHistory = []; draw(); updateStats();
+    });
+    btnPlace.addEventListener('click', function () {
+      stop();
+      var p = patternSel.value;
+      if (!p) { return; }
+      AlgoExt.lifePlace(grid, p, ROWS / 2 - 3, COLS / 2 - 3);
+      draw(); updateStats();
+    });
+
+    /* ---------- 启动 ---------- */
+    function init() {
+      UI.api('/api/life/new?rows=' + ROWS).catch(function () { return null; });
+      UI.api('/api/life/new', { method: 'POST', body: { rows: ROWS, cols: COLS, density: 0.28 } })
+        .then(function (res) {
+          if (res && res.grid) {
+            srcTag.textContent = '数据源：后端 API';
+            grid = res.grid;
+          } else {
+            srcTag.textContent = '数据源：本地兜底';
+            grid = AlgoExt.lifeRandom(ROWS, COLS, 0.28);
+          }
+          draw(); updateStats();
+        });
+    }
+    grid = emptyGrid();
+    draw();
+    init();
+  })();
+  </script>
+</body>
+</html>

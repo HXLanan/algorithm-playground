@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>一致性哈希 · Algo Playground</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script>window.__ALGO_ACTIVE__ = 'consistent-hash.html';</script>
+</head>
+<body>
+  <main class="wrap">
+    <h1>💠 一致性哈希</h1>
+    <p class="sub">
+      把数据分散到多台服务器时，普通做法是 <code>hash(key) % N</code>。
+      但只要增删一台机器，N 变了，<b>几乎所有 key 都要重新搬家</b>——缓存瞬间全失效。
+      一致性哈希把哈希空间弯成一个<b>环</b>来解决这个问题。
+    </p>
+
+    <section class="card">
+      <div class="btnrow">
+        <span class="tag">服务器</span>
+        <input id="srvInput" type="text" value="S1,S2,S3,S4"
+               style="width:170px;background:#232a45;color:#e6e9f5;border:1px solid #2e3654;border-radius:8px;padding:7px 10px;font-family:monospace;">
+        <span class="tag">虚拟节点</span>
+        <input id="vnInput" type="number" value="3" min="1" max="50" style="width:70px;background:#232a45;color:#e6e9f5;border:1px solid #2e3654;border-radius:8px;padding:7px 10px;">
+        <span class="tag">key 数量</span>
+        <input id="keyInput" type="number" value="40" min="5" max="200" style="width:70px;background:#232a45;color:#e6e9f5;border:1px solid #2e3654;border-radius:8px;padding:7px 10px;">
+        <button id="btnRun">🔄 重新分配</button>
+        <button id="btnRemove" class="pink">🗑 移除最后一台服务器</button>
+        <span id="srcTag" class="tag">数据源：本地</span>
+      </div>
+      <div class="canvas-host" style="margin-top:14px;">
+        <canvas id="cv" width="620" height="620"></canvas>
+      </div>
+      <p class="info-line" id="msg" style="color:#fbbf24;font-weight:600;"></p>
+      <p class="info-line" id="stats"></p>
+    </section>
+
+    <section class="card-grid">
+      <div class="card">
+        <h2>核心思路：把哈希空间弯成环</h2>
+        <p>① 哈希值范围是 0 ~ 2³²-1，把它首尾相连成一个<b>圆环</b></p>
+        <p>② 每台服务器按 <code>hash(服务器名)</code> 放到环上</p>
+        <p>③ 每个 key 也哈希到环上，<b>顺时针找到的第一台服务器</b>就是它的归属</p>
+        <p class="info-line">这样增删一台机器，只影响环上相邻的一小段区间，
+           其余 key 完全不动——这就是它"一致性"的含义。</p>
+      </div>
+      <div class="card">
+        <h2>虚拟节点：让负载更均匀</h2>
+        <p>只用 4 台服务器直接放到环上，位置可能挤在一起，导致负载倾斜。</p>
+        <p>解法：每台物理机映射成 <b>N 个虚拟节点</b>散布在环上，
+           各自的区间被"打散"，负载就均衡了。</p>
+        <p id="vnodeInfo" class="info-line"></p>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>实测对比：移除一台服务器会迁移多少数据？</h2>
+      <p id="compareInfo" class="info-line" style="font-size:15px;"></p>
+      <p class="info-line">这就是为什么 Redis Cluster、Cassandra、Memcached 客户端
+         都采用一致性哈希——它把"扩容导致缓存雪崩"的风险降到了最低。</p>
+    </section>
+  </main>
+
+  <script src="../assets/js/nav.js"></script>
+  <script src="../assets/js/related.js"></script>
+  <script src="../assets/js/algo-core-ext.js"></script>
+  <script src="../assets/js/ui.js"></script>
+  <script>
+  (function () {
+    "use strict";
+    var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+    var srvInput = document.getElementById('srvInput'), vnInput = document.getElementById('vnInput');
+    var keyInput = document.getElementById('keyInput');
+    var btnRun = document.getElementById('btnRun'), btnRemove = document.getElementById('btnRemove');
+    var msg = document.getElementById('msg'), statsEl = document.getElementById('stats');
+    var vnodeInfo = document.getElementById('vnodeInfo'), compareInfo = document.getElementById('compareInfo');
+    var srcTag = document.getElementById('srcTag');
+
+    var W = 620, H = 620, CX = W / 2, CY = H / 2, RAD = 240;
+    var COLORS = ['#5eead4', '#fbbf24', '#f472b6', '#60a5fa', '#a78bfa',
+                  '#34d399', '#fb7185', '#facc15', '#38bdf8', '#e879f9'];
+
+    var ring = [], details = [], counts = {}, servers = [];
+
+    function ringXY(angle360, radius) {
+      var ang = angle360 * Math.PI / 180 - Math.PI / 2;
+      return [CX + radius * Math.cos(ang), CY + radius * Math.sin(ang)];
+    }
+
+    /* ---------- 绘制 ---------- */
+    function draw() {
+      ctx.clearRect(0, 0, W, H);
+
+      // 圆环
+      ctx.beginPath();
+      ctx.arc(CX, CY, RAD, 0, Math.PI * 2);
+      ctx.strokeStyle = '#39405e';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      // 刻度（每 30 度）
+      for (var a = 0; a < 360; a += 30) {
+        var p1 = ringXY(a, RAD - 8), p2 = ringXY(a, RAD + 8);
+        ctx.strokeStyle = 'rgba(90,105,150,0.4)';
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(p1[0], p1[1]); ctx.lineTo(p2[0], p2[1]); ctx.stroke();
+
+        var pt = ringXY(a, RAD + 26);
+        ctx.fillStyle = '#4a5578';
+        ctx.font = '10px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(String(a), pt[0], pt[1]);
+      }
+
+      // 绘制 key 点（在环内侧）
+      for (var d = 0; d < details.length; d++) {
+        var det = details[d];
+        var ang = det.pos % 100000 * 360 / 100000;
+        var kp = ringXY(ang, RAD - 34);
+        var si = servers.indexOf(det.server);
+        ctx.beginPath();
+        ctx.arc(kp[0], kp[1], 3.2, 0, Math.PI * 2);
+        ctx.fillStyle = si >= 0 ? COLORS[si % COLORS.length] : '#666';
+        ctx.globalAlpha = 0.75;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+
+      // 绘制虚拟节点（在环上）
+      for (var r = 0; r < ring.length; r++) {
+        var node = ring[r];
+        var np = ringXY(node.angle360, RAD);
+        var ni = servers.indexOf(node.server);
+        var col = COLORS[ni % COLORS.length];
+
+        ctx.beginPath();
+        ctx.arc(np[0], np[1], 9, 0, Math.PI * 2);
+        ctx.fillStyle = col;
+        ctx.fill();
+        ctx.strokeStyle = '#0b0e1a';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // 服务器名（只标第一个虚拟节点）
+        if (node.vnode === node.server) {
+          var lp = ringXY(node.angle360, RAD + 44);
+          ctx.fillStyle = col;
+          ctx.font = 'bold 13px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(node.server, lp[0], lp[1]);
+        }
+      }
+
+      // 中心统计
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#5eead4';
+      ctx.font = 'bold 18px sans-serif';
+      ctx.fillText('服务器负载分布', CX, CY - 58);
+
+      var y = CY - 20;
+      for (var s = 0; s < servers.length; s++) {
+        var cnt = counts[servers[s]] || 0;
+        var pct = details.length ? (cnt / details.length * 100) : 0;
+        ctx.fillStyle = COLORS[s % COLORS.length];
+        ctx.font = 'bold 15px sans-serif';
+        ctx.textAlign = 'right';
+        ctx.fillText(servers[s], CX - 12, y);
+        ctx.textAlign = 'left';
+        ctx.fillStyle = '#e6e9f5';
+        ctx.fillText(cnt + ' 个 (' + pct.toFixed(0) + '%)', CX + 4, y);
+        y += 26;
+      }
+
+      if (ring.length) {
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#5d6a92';
+        ctx.font = '12px sans-serif';
+        ctx.fillText('环上共 ' + ring.length + ' 个节点（含虚拟节点）', CX, CY + 96);
+      }
+    }
+
+    /* ---------- 运行 ---------- */
+    function parseServers() {
+      return srvInput.value.split(/[,，\s]+/).filter(function (s) { return s.trim(); }).slice(0, 10);
+    }
+
+    function run() {
+      servers = parseServers();
+      if (servers.length < 2) servers = ['S1', 'S2', 'S3'];
+      var vn = Math.min(50, Math.max(1, parseInt(vnInput.value, 10) || 1));
+      var kc = Math.min(200, Math.max(5, parseInt(keyInput.value, 10) || 40));
+      var keys = [];
+      for (var i = 1; i <= kc; i++) keys.push('user:' + i);
+
+      UI.api('/api/consistent-hash/distribute', {
+        method: 'POST', body: { servers: servers, keys: keys, vnodes: vn }
+      }).then(function (res) {
+        if (res && res.ring) { srcTag.textContent = '数据源：后端 API'; }
+        else {
+          srcTag.textContent = '数据源：本地兜底';
+          var r = AlgoExt.chDistribute(keys, servers, vn);
+          res = { ring: r.ring, counts: r.counts, details: r.details };
+        }
+        ring = res.ring || [];
+        counts = res.counts || {};
+        details = res.details || [];
+        draw();
+
+        var maxC = 0, minC = 1e9;
+        Object.keys(counts).forEach(function (k2) {
+          maxC = Math.max(maxC, counts[k2]);
+          minC = Math.min(minC, counts[k2]);
+        });
+        statsEl.textContent = kc + ' 个 key 分配到 ' + servers.length + ' 台服务器' +
+          '　｜　最多 ' + maxC + ' 个，最少 ' + minC + ' 个' +
+          '　｜　每台平均 ' + (kc / servers.length).toFixed(1) + ' 个';
+        msg.textContent = '每台服务器负责环上的一段圆弧；越均衡说明虚拟节点设置得越合理。';
+
+        if (res.vnodeComparison && res.vnodeComparison.table) {
+          var t = res.vnodeComparison.table;
+          var parts = [];
+          for (var j = 0; j < t.length; j++) {
+            parts.push('虚拟节点' + t[j].vnodes + '个：标准差 ' + t[j].stddev);
+          }
+          vnodeInfo.textContent = '实测均衡度（标准差越小越均匀）：' + parts.join('　｜　');
+        }
+      });
+    }
+
+    btnRun.addEventListener('click', run);
+    vnInput.addEventListener('change', run);
+    keyInput.addEventListener('change', run);
+    srvInput.addEventListener('change', run);
+
+    btnRemove.addEventListener('click', function () {
+      if (servers.length <= 2) { msg.textContent = '至少保留 2 台服务器'; return; }
+      var vn = Math.min(50, Math.max(1, parseInt(vnInput.value, 10) || 1));
+      var kc = Math.min(200, Math.max(5, parseInt(keyInput.value, 10) || 40));
+      var keys = [];
+      for (var i = 1; i <= kc; i++) keys.push('user:' + i);
+
+      UI.api('/api/consistent-hash/compare_removal', {
+        method: 'POST', body: { servers: servers, keys: keys, vnodes: vn }
+      }).then(function (res) {
+        if (res && res.consistentHashing) {
+          showCompare(res);
+        } else {
+          // 本地兜底：手动计算
+          var before = AlgoExt.chDistribute(keys, servers, vn);
+          var afterServers = servers.slice(0, -1);
+          var after = AlgoExt.chDistribute(keys, afterServers, vn);
+          var moved = 0;
+          for (var j = 0; j < keys.length; j++) {
+            if (before.details[j].server !== after.details[j].server) moved++;
+          }
+          var movedMod = 0;
+          for (var m = 0; m < keys.length; m++) {
+            var b = servers[AlgoExt.chHash(keys[m]) % servers.length];
+            var a = afterServers[AlgoExt.chHash(keys[m]) % afterServers.length];
+            if (b !== a) movedMod++;
+          }
+          showCompare({
+            removedServer: servers[servers.length - 1],
+            totalKeys: keys.length,
+            consistentHashing: { moved: moved, ratio: moved / keys.length },
+            moduloHashing: { moved: movedMod, ratio: movedMod / keys.length }
+          });
+        }
+        // 更新画面为移除后的状态
+        servers = servers.slice(0, -1);
+        srvInput.value = servers.join(',');
+        run();
+      });
+    });
+
+    function showCompare(res) {
+      compareInfo.innerHTML =
+        '移除服务器 <b style="color:#f472b6">' + res.removedServer + '</b>（共 ' +
+        res.totalKeys + ' 个 key）：<br>' +
+        '· <b style="color:#34d399">一致性哈希</b>：迁移 ' + res.consistentHashing.moved +
+        ' 个（' + (res.consistentHashing.ratio * 100).toFixed(1) + '%）<br>' +
+        '· <b style="color:#fb7185">取模哈希 hash%N</b>：迁移 ' + res.moduloHashing.moved +
+        ' 个（' + (res.moduloHashing.ratio * 100).toFixed(1) + '%）<br>' +
+        '→ 取模法几乎把全部数据都打乱了，而一致性哈希只动了相邻区间的一小部分。';
+    }
+
+    run();
+  })();
+  </script>
+</body>
+</html>

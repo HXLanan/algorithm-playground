@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>拓扑排序 · Algo Playground</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script>window.__ALGO_ACTIVE__ = 'topo-sort.html';</script>
+</head>
+<body>
+  <main class="wrap">
+    <h1>🔗 拓扑排序</h1>
+    <p class="sub">
+      给有<b>依赖关系</b>的任务排出执行顺序：被依赖的先执行。
+      典型场景是课程先修关系、构建系统的编译顺序、包管理器解析依赖。
+      如果依赖成环了（A 等 B、B 等 A），那就<b>无解</b>。
+    </p>
+
+    <section class="card">
+      <div class="btnrow">
+        <span class="tag">算法</span>
+        <select id="algoSel">
+          <option value="kahn">Kahn 算法（入度法）</option>
+          <option value="dfs">DFS 后序逆序</option>
+        </select>
+        <button id="btnPlay">▶ 播放</button>
+        <button id="btnStep" class="amber">⏭ 单步</button>
+        <button id="btnNew" class="secondary">🎲 换一张图</button>
+        <button id="btnCyclic" class="pink">⚠️ 看"有环"的例子</button>
+        <span id="srcTag" class="tag">数据源：本地</span>
+      </div>
+      <div class="canvas-host" style="margin-top:14px;">
+        <canvas id="cv" width="900" height="420"></canvas>
+      </div>
+      <p class="info-line" id="msg" style="color:#fbbf24;font-weight:600;"></p>
+      <p class="info-line" id="stats"></p>
+    </section>
+
+    <section class="card-grid">
+      <div class="card">
+        <h2>Kahn 算法：盯着入度</h2>
+        <p>① 统计每个节点的<b>入度</b>（有多少条边指向它）</p>
+        <p>② 把所有入度为 0 的节点放进队列（它们没有前置依赖）</p>
+        <p>③ 取出一个加入结果，把它指向的节点入度减 1</p>
+        <p>④ 如果某个节点入度变成 0，入队</p>
+        <p class="info-line">如果最后没能取出全部节点，说明剩下的节点互相依赖成环了。</p>
+      </div>
+      <div class="card">
+        <h2>DFS 后序逆序</h2>
+        <p>深度优先遍历，节点<b>「完成」时</b>压入序列，最后整体反转。</p>
+        <p>直觉：一个任务必须等它依赖的所有任务都完成，所以它应该排在<b>更后面</b>。</p>
+        <p class="info-line">两种方法结果可能不同（拓扑序往往不唯一），但都合法。
+           实际工程中 Kahn 更常用，因为它天然能检测环。</p>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>现实中的应用</h2>
+      <p>🔹 <b>课程表</b>：LeetCode 207/210 题——给定先修关系，判断能否修完 / 给出修课顺序</p>
+      <p>🔹 <b>构建系统</b>：Make、Bazel、Maven 决定先编译哪些模块</p>
+      <p>🔹 <b>包管理器</b>：npm/pip 解析依赖树，检测循环依赖并报错</p>
+      <p>🔹 <b>电子表格</b>：单元格公式的求值顺序（A1 依赖 B1，就得先算 B1）</p>
+    </section>
+  </main>
+
+  <script src="../assets/js/nav.js"></script>
+  <script src="../assets/js/related.js"></script>
+  <script src="../assets/js/algo-core-ext.js"></script>
+  <script src="../assets/js/ui.js"></script>
+  <script>
+  (function () {
+    "use strict";
+    var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+    var algoSel = document.getElementById('algoSel');
+    var btnPlay = document.getElementById('btnPlay'), btnStep = document.getElementById('btnStep');
+    var btnNew = document.getElementById('btnNew'), btnCyclic = document.getElementById('btnCyclic');
+    var msg = document.getElementById('msg'), statsEl = document.getElementById('stats');
+    var srcTag = document.getElementById('srcTag');
+
+    var W = 900, H = 420, PADX = 70, PADY = 70;
+    var graph = null, result = null;
+    var cur = 0, timer = null;
+
+    function toXY(p) {
+      return [PADX + p[0] * (W - PADX * 2), PADY + p[1] * (H - PADY * 2)];
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, W, H);
+      if (!graph) return;
+
+      // 已确定的拓扑序（按已播放步数）
+      var ordered = [];
+      if (result) {
+        for (var k = 0; k < Math.min(cur, result.steps.length); k++) {
+          var st = result.steps[k];
+          if (st.type === 'process' && st.node !== undefined) ordered.push(st.node);
+          if (st.type === 'finish' && st.node !== undefined) ordered.push(st.node);
+        }
+      }
+      // 去重保序
+      var seen = {}, orderList = [];
+      for (var oi = 0; oi < ordered.length; oi++) {
+        if (!seen[ordered[oi]]) { seen[ordered[oi]] = true; orderList.push(ordered[oi]); }
+      }
+
+      var s = (result && cur > 0) ? result.steps[cur - 1] : null;
+      var curNode = s ? s.node : -1;
+
+      // 画边（带箭头）
+      for (var ei = 0; ei < graph.edges.length; ei++) {
+        var e = graph.edges[ei];
+        var p1 = toXY(graph.pos[e.u]), p2 = toXY(graph.pos[e.v]);
+        var dx = p2[0] - p1[0], dy = p2[1] - p1[1];
+        var len = Math.sqrt(dx * dx + dy * dy) || 1;
+        var ux = dx / len, uy = dy / len;
+        var x1 = p1[0] + ux * 24, y1 = p1[1] + uy * 24;
+        var x2 = p2[0] - ux * 24, y2 = p2[1] - uy * 24;
+
+        var active = (seen[e.u] && !seen[e.v]);
+        ctx.strokeStyle = active ? 'rgba(251,191,36,0.8)' : 'rgba(90,105,150,0.45)';
+        ctx.lineWidth = active ? 3 : 1.8;
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+
+        // 箭头
+        var ang = Math.atan2(uy, ux);
+        ctx.fillStyle = active ? '#fbbf24' : 'rgba(120,135,180,0.7)';
+        ctx.beginPath();
+        ctx.moveTo(x2, y2);
+        ctx.lineTo(x2 - 10 * Math.cos(ang - 0.4), y2 - 10 * Math.sin(ang - 0.4));
+        ctx.lineTo(x2 - 10 * Math.cos(ang + 0.4), y2 - 10 * Math.sin(ang + 0.4));
+        ctx.closePath();
+        ctx.fill();
+      }
+
+      // 画节点
+      for (var ni = 0; ni < graph.n; ni++) {
+        var p = toXY(graph.pos[ni]);
+        var done = seen[ni];
+        var isCur = ni === curNode;
+        var r = 22;
+
+        ctx.beginPath();
+        ctx.arc(p[0], p[1], isCur ? 26 : r, 0, Math.PI * 2);
+        ctx.fillStyle = isCur ? '#fbbf24' : (done ? '#34d399' : '#2b3350');
+        ctx.fill();
+        ctx.strokeStyle = isCur ? '#fbbf24' : (done ? '#34d399' : '#4a5578');
+        ctx.lineWidth = 2.5;
+        ctx.stroke();
+
+        ctx.fillStyle = (isCur || done) ? '#0b0e1a' : '#e6e9f5';
+        ctx.font = 'bold 15px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(String(ni), p[0], p[1]);
+      }
+
+      // 底部显示已确定的拓扑序
+      ctx.fillStyle = '#9aa3c0';
+      ctx.font = '14px sans-serif';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'alphabetic';
+      ctx.fillText('已确定的拓扑序：' + (orderList.length ? orderList.join(' → ') : '（尚未开始）'), 24, H - 22);
+    }
+
+    function updateUI() {
+      if (!result) return;
+      var total = result.steps.length;
+      var s = (cur > 0 && cur <= total) ? result.steps[cur - 1] : null;
+      msg.textContent = s ? s.msg : '准备开始…';
+      statsEl.textContent = '步骤 ' + cur + ' / ' + total +
+        (result.hasCycle ? '　｜　⚠️ 检测到环，无法完成拓扑排序' : '');
+    }
+    function render() { draw(); updateUI(); }
+
+    function loadData(newGraph, cyclic) {
+      if (cyclic) {
+        UI.api('/api/topo-sort/cyclic').then(function (res) {
+          if (res && res.result) {
+            srcTag.textContent = '数据源：后端 API';
+            graph = res.graph; result = res.result;
+          } else {
+            srcTag.textContent = '数据源：本地兜底';
+            graph = { n: 5, pos: [[0.1,0.5],[0.3,0.2],[0.5,0.7],[0.7,0.3],[0.9,0.5]],
+                      edges: [{u:0,v:1},{u:1,v:2},{u:2,v:3},{u:3,v:1},{u:2,v:4}] };
+            result = AlgoExt.topoKahn(graph);
+          }
+          cur = 0; render();
+          msg.textContent = '⚠️ 看这个例子：1→2→3→1 形成环，这三个节点的入度永远不会归零，' +
+                            '所以拓扑排序无法完成——这就是「循环依赖」检测。';
+        });
+        return;
+      }
+
+      var body = { algo: algoSel.value, new_graph: !!newGraph, n: 7 };
+      if (!newGraph && graph) body.graph = graph;
+      UI.api('/api/topo-sort/run', { method: 'POST', body: body }).then(function (res) {
+        if (res && res.steps) { srcTag.textContent = '数据源：后端 API'; }
+        else {
+          srcTag.textContent = '数据源：本地兜底';
+          var g = (!newGraph && graph) ? graph : AlgoExt.randomDagJS(7);
+          var r = AlgoExt.topoKahn(g);
+          res = { graph: g, order: r.order, steps: r.steps, hasCycle: r.hasCycle,
+                  algorithmName: 'Kahn 算法（本地）' };
+        }
+        graph = res.graph; result = res;
+        cur = 0; render();
+      });
+    }
+
+    function stopPlay() { if (timer) { clearInterval(timer); timer = null; } }
+    function play() {
+      if (timer) { stopPlay(); return; }
+      if (!result) { loadData(false); return; }
+      if (cur >= result.steps.length) { cur = 0; render(); }
+      timer = setInterval(function () {
+        if (cur >= result.steps.length) { stopPlay(); return; }
+        cur++; render();
+      }, 620);
+    }
+    function stepOnce() {
+      stopPlay();
+      if (!result) { loadData(false); return; }
+      if (cur < result.steps.length) { cur++; render(); }
+    }
+
+    btnPlay.addEventListener('click', play);
+    btnStep.addEventListener('click', stepOnce);
+    btnNew.addEventListener('click', function () { stopPlay(); graph = null; loadData(true); });
+    btnCyclic.addEventListener('click', function () { stopPlay(); loadData(false, true); });
+    algoSel.addEventListener('change', function () { stopPlay(); loadData(false); });
+
+    loadData(false);
+  })();
+  </script>
+</body>
+</html>

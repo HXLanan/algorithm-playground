@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>遗传算法 · 小世界 · Algo Playground</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script>window.__ALGO_ACTIVE__ = 'genetic.html';</script>
+</head>
+<body>
+  <main class="wrap">
+    <h1>🧬 遗传算法 · 一个会自己「进步」的小世界</h1>
+    <p class="sub">
+      每个彩点是一个"个体"，带两个基因 <b>(x, y)</b>，目标是爬到最高的<b>金峰</b>。
+      我们模拟自然选择：越靠近金峰的个体越有机会繁衍，后代再交叉、变异。
+    </p>
+
+    <section class="card">
+      <div class="btnrow">
+        <button id="btnGen">▶ 进化 1 代</button>
+        <button id="btnAuto" class="amber">◆ 连续进化 80 代</button>
+        <button id="btnReseed" class="secondary">🌱 重新投 200 个个体</button>
+        <span id="genLabel" style="color:#9aa3c0;">第 0 代</span>
+        <span id="srcTag" class="tag">数据源：本地</span>
+      </div>
+      <div class="canvas-host" style="margin-top:12px;">
+        <canvas id="cv" width="900" height="470"></canvas>
+      </div>
+      <p class="info-line" id="bestInfo"></p>
+      <p class="info-line">适应度：离金峰 (0.72, 0.66) 越近越高。点越靠近峰值颜色越金、半径越大。</p>
+    </section>
+
+    <section class="card">
+      <h2>三个"进化算子"分别在做什么？</h2>
+      <p><span style="color:#fbbf24">■ 选择 Selection</span>：轮盘赌挑选——适应度高的个体被选中概率更大。这就是"优胜劣汰"。</p>
+      <p><span style="color:#f472b6">■ 交叉 Crossover</span>：把父母各自的 x、y 基因拼给孩子，让后代承袭优点。</p>
+      <p><span style="color:#34d399">■ 变异 Mutation</span>：小概率扰动某个基因，避免种群过于保守、能跳出局部最优。</p>
+      <p class="info-line">注意：每代都保留精英个体，所以最优解只会更好、不会退化；而变异则保证种群始终保有探索能力——这正是遗传算法的魅力：<b>算法自己去找答案，而不是人告诉它怎么走</b>。</p>
+    </section>
+  </main>
+
+  <script src="../assets/js/nav.js"></script>
+  <script src="../assets/js/related.js"></script>
+  <script src="../assets/js/algo-core.js"></script>
+  <script src="../assets/js/ui.js"></script>
+  <script>
+  (function () {
+    "use strict";
+    var cv = document.getElementById('cv');
+    var ctx = cv.getContext('2d');
+    var W = 900, H = 470;
+    var btnGen = document.getElementById('btnGen');
+    var btnAuto = document.getElementById('btnAuto');
+    var btnReseed = document.getElementById('btnReseed');
+    var genLabel = document.getElementById('genLabel');
+    var bestInfo = document.getElementById('bestInfo');
+    var srcTag = document.getElementById('srcTag');
+
+    var POP = 200;
+    var GOLD = [0.72, 0.66];
+    var population = [];
+    var generation = 0;
+    var busy = false;
+    var timer = null;
+
+    /* ---------- 绘制 ---------- */
+    function fitness(x, y) {
+      var d = Math.sqrt((x - GOLD[0]) * (x - GOLD[0]) + (y - GOLD[1]) * (y - GOLD[1]));
+      return 1 / (1 + d * d);
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, W, H);
+
+      var g = ctx.createRadialGradient(W * GOLD[0], H * GOLD[1], 8, W * GOLD[0], H * GOLD[1], 280);
+      g.addColorStop(0, 'rgba(251,191,36,0.55)');
+      g.addColorStop(0.4, 'rgba(175,110,50,0.22)');
+      g.addColorStop(1, 'rgba(30,38,60,0.10)');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, W, H);
+
+      ctx.strokeStyle = 'rgba(120,130,170,0.08)';
+      for (var i = 0; i < W; i += 45) { ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, H); ctx.stroke(); }
+      for (var j = 0; j < H; j += 45) { ctx.beginPath(); ctx.moveTo(0, j); ctx.lineTo(W, j); ctx.stroke(); }
+
+      // 金峰
+      ctx.beginPath();
+      ctx.arc(W * GOLD[0], H * GOLD[1], 12, 0, Math.PI * 2);
+      ctx.fillStyle = '#ffe055';
+      ctx.shadowColor = 'rgba(255,220,80,0.9)';
+      ctx.shadowBlur = 18;
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = '#7a4d00';
+      ctx.font = 'bold 16px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('▲ 金峰', W * GOLD[0], H * GOLD[1] - 18);
+
+      // 个体
+      for (var k = 0; k < population.length; k++) {
+        var p = population[k];
+        var f = fitness(p[0], p[1]);
+        var px = p[0] * W, py = p[1] * H;
+        ctx.beginPath();
+        ctx.arc(px, py, 2 + f * 5, 0, Math.PI * 2);
+        ctx.fillStyle = f > 0.5 ? '#f59e0b' : '#5d8bdd';
+        ctx.globalAlpha = 0.35 + f * 0.55;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+    }
+
+    function updateInfo() {
+      genLabel.textContent = '第 ' + generation + ' 代';
+      if (!population.length) {
+        bestInfo.textContent = '（种群为空）';
+        return;
+      }
+      var best = population[0], bf = fitness(best[0], best[1]);
+      var sum = 0;
+      for (var i = 0; i < population.length; i++) {
+        var f = fitness(population[i][0], population[i][1]);
+        sum += f;
+        if (f > bf) { bf = f; best = population[i]; }
+      }
+      bestInfo.textContent = '🔺 最优接近度 ' + (bf * 100).toFixed(1) + '%　' +
+        '平均适应度 ' + ((sum / population.length) * 100).toFixed(1) + '%　' +
+        '最优位置 (' + best[0].toFixed(2) + ', ' + best[1].toFixed(2) + ')';
+    }
+
+    /* ---------- 进化（后端优先） ---------- */
+    function evolve(generations) {
+      if (busy) return;
+      busy = true;
+      UI.api('/api/genetic/evolve', {
+        method: 'POST',
+        body: { population: population, pop_size: POP, generations: generations }
+      }).then(function (res) {
+        if (res && res.population) {
+          srcTag.textContent = '数据源：后端 API';
+          population = res.population;
+          generation += res.generations;
+        } else {
+          srcTag.textContent = '数据源：本地兜底';
+          var r = AlgoCore.gRun(population, generations);
+          population = r.population;
+          generation += generations;
+        }
+        draw();
+        updateInfo();
+        busy = false;
+      });
+    }
+
+    function reseed() {
+      stopAuto();
+      population = AlgoCore.gRandomPopulation(POP);
+      generation = 0;
+      draw();
+      updateInfo();
+    }
+
+    function stopAuto() {
+      if (timer) { clearInterval(timer); timer = null; }
+      btnAuto.textContent = '◆ 连续进化 80 代';
+    }
+    function startAuto() {
+      stopAuto();
+      btnAuto.textContent = '⏹ 停止';
+      var count = 0;
+      timer = setInterval(function () {
+        if (count >= 80) { stopAuto(); return; }
+        if (!busy) { evolve(1); count++; }
+      }, 80);
+    }
+
+    btnGen.addEventListener('click', function () { stopAuto(); evolve(1); });
+    btnAuto.addEventListener('click', function () { if (timer) stopAuto(); else startAuto(); });
+    btnReseed.addEventListener('click', reseed);
+
+    reseed();
+  })();
+  </script>
+</body>
+</html>

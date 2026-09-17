@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>N 皇后 · 回溯法 · Algo Playground</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script>window.__ALGO_ACTIVE__ = 'nqueens.html';</script>
+</head>
+<body>
+  <main class="wrap">
+    <h1>♛ N 皇后 · 回溯法</h1>
+    <p class="sub">
+      在 n×n 棋盘上放 n 个皇后，要求互不攻击（不同行、不同列、不同对角线）。
+      点播放，看算法怎样<b>逐行试探、冲突就撤回换位</b>——这就是回溯法。
+    </p>
+
+    <section class="card">
+      <div class="btnrow">
+        <span class="tag">棋盘</span>
+        <select id="nSel">
+          <option value="4">4 × 4</option>
+          <option value="5">5 × 5</option>
+          <option value="6" selected>6 × 6</option>
+          <option value="7">7 × 7</option>
+          <option value="8">8 × 8（经典）</option>
+        </select>
+        <button id="btnPlay">▶ 播放过程</button>
+        <button id="btnStep" class="amber">⏭ 单步</button>
+        <button id="btnReset" class="secondary">♻️ 重来</button>
+        <button id="btnFast" class="pink">⚡ 直接给答案</button>
+        <span id="srcTag" class="tag">数据源：本地</span>
+      </div>
+      <div class="info-line">
+        进度：<input type="range" id="progress" min="0" max="100" value="0" style="width:340px; vertical-align:middle;">
+        <span id="phase" style="font-weight:700;"></span>
+      </div>
+      <div class="canvas-host" style="margin-top:14px;">
+        <canvas id="cv" width="560" height="560"></canvas>
+      </div>
+      <p class="info-line" id="stats"></p>
+    </section>
+
+    <section class="card-grid">
+      <div class="card">
+        <h2>回溯法在做什么？</h2>
+        <p>它本质上是一种<b>「带剪枝的枚举」</b>：</p>
+        <p>① 在第 1 行放一个皇后<br>
+           ② 到第 2 行找一个不被攻击的位置<br>
+           ③ 若整行都被攻击 → <b>回溯</b>到上一行换位置<br>
+           ④ 直到 n 行都放下 → 找到一个解</p>
+        <p class="info-line">剪枝是关键：一旦发现当前选择不可能成功，就立刻放弃这条分支，而不是傻傻地枚举所有 nⁿ 种摆法。</p>
+      </div>
+      <div class="card">
+        <h2>解的数量增长很快</h2>
+        <p id="countTable" class="info-line"></p>
+        <p class="info-line">n=2、3 无解；8 皇后有 92 个解。暴力枚举全排列是 8!=40320 种，
+           用回溯每秒能轻松处理更大的 n。</p>
+      </div>
+    </section>
+  </main>
+
+  <script src="../assets/js/nav.js"></script>
+  <script src="../assets/js/related.js"></script>
+  <script src="../assets/js/algo-core-ext.js"></script>
+  <script src="../assets/js/ui.js"></script>
+  <script>
+  (function () {
+    "use strict";
+    var cv = document.getElementById('cv');
+    var ctx = cv.getContext('2d');
+    var nSel = document.getElementById('nSel');
+    var btnPlay = document.getElementById('btnPlay');
+    var btnStep = document.getElementById('btnStep');
+    var btnReset = document.getElementById('btnReset');
+    var btnFast = document.getElementById('btnFast');
+    var progress = document.getElementById('progress');
+    var phase = document.getElementById('phase');
+    var statsEl = document.getElementById('stats');
+    var countTable = document.getElementById('countTable');
+    var srcTag = document.getElementById('srcTag');
+
+    var n = 6;
+    var steps = [];
+    var cur = 0;
+    var timer = null;
+    var solutionCount = 0;
+
+    var CELL, OX, OY;
+
+    function layout() {
+      CELL = Math.floor((cv.width - 60) / n);
+      OX = Math.floor((cv.width - n * CELL) / 2);
+      OY = Math.floor((cv.height - n * CELL) / 2);
+    }
+
+    /* ---------- 绘制 ---------- */
+    function draw() {
+      ctx.clearRect(0, 0, cv.width, cv.height);
+      layout();
+      var s = cur > 0 && cur <= steps.length ? steps[cur - 1] : null;
+      var board = s ? s.board : null;
+      var hlRow = s ? s.row : -1;
+      var hlCol = s ? s.col : -1;
+
+      // 棋盘
+      for (var r = 0; r < n; r++) {
+        for (var c = 0; c < n; c++) {
+          var x = OX + c * CELL, y = OY + r * CELL;
+          ctx.fillStyle = ((r + c) % 2 === 0) ? '#1c2238' : '#252c47';
+          ctx.fillRect(x, y, CELL, CELL);
+        }
+      }
+
+      // 冲突高亮
+      if (s && s.type === 'conflict' && hlRow >= 0 && hlCol >= 0) {
+        ctx.fillStyle = 'rgba(251,113,133,0.55)';
+        ctx.fillRect(OX + hlCol * CELL, OY + hlRow * CELL, CELL, CELL);
+        // 被攻击的攻击线
+        ctx.strokeStyle = 'rgba(251,113,133,0.35)';
+        ctx.lineWidth = 1;
+        for (var rr = 0; rr < n; rr++) {
+          if (rr === hlRow) continue;
+          var qc = board[rr];
+          if (qc < 0) continue;
+          if (qc === hlCol || Math.abs(qc - hlCol) === Math.abs(rr - hlRow)) {
+            ctx.beginPath();
+            ctx.moveTo(OX + (hlCol + 0.5) * CELL, OY + (hlRow + 0.5) * CELL);
+            ctx.lineTo(OX + (qc + 0.5) * CELL, OY + (rr + 0.5) * CELL);
+            ctx.stroke();
+          }
+        }
+      }
+
+      // 当前正在处理的行
+      if (hlRow >= 0 && hlRow < n && s && s.type !== 'conflict') {
+        ctx.strokeStyle = 'rgba(94,234,212,0.5)';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(OX, OY + hlRow * CELL, n * CELL, CELL);
+      }
+
+      // 皇后
+      if (board) {
+        for (var r2 = 0; r2 < n; r2++) {
+          var col = board[r2];
+          if (col < 0) continue;
+          drawQueen(OX + col * CELL, OY + r2 * CELL, CELL,
+                    (s && s.type === 'solution') ? '#fbbf24' : '#5eead4');
+        }
+      }
+
+      // 解标记
+      if (s && s.type === 'solution') {
+        ctx.fillStyle = '#34d399';
+        ctx.font = 'bold 20px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('🎉 找到一个解！', cv.width / 2, 32);
+      }
+    }
+    function drawQueen(x, y, size, color) {
+      var cx = x + size / 2, cy = y + size / 2, s = size * 0.34;
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(cx, cy - s * 0.45, s * 0.5, 0, Math.PI * 2);   // 头
+      ctx.fill();
+      ctx.beginPath();                                        // 冠
+      ctx.moveTo(cx - s * 0.7, cy + s * 0.6);
+      ctx.lineTo(cx - s * 0.7, cy - s * 0.1);
+      ctx.lineTo(cx - s * 0.3, cy + s * 0.25);
+      ctx.lineTo(cx, cy - s * 0.35);
+      ctx.lineTo(cx + s * 0.3, cy + s * 0.25);
+      ctx.lineTo(cx + s * 0.7, cy - s * 0.1);
+      ctx.lineTo(cx + s * 0.7, cy + s * 0.6);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    /* ---------- 状态 ---------- */
+    function updateUI() {
+      var total = steps.length;
+      phase.textContent = cur === 0 ? '准备开始' :
+        (cur <= total && steps[cur - 1] ? steps[cur - 1].msg : '已完成');
+      progress.max = total;
+      progress.value = cur;
+      statsEl.textContent = '第 ' + cur + ' / ' + total + ' 步 ｜ 已找到 ' + solutionCount + ' 个解';
+    }
+    function render() { draw(); updateUI(); }
+
+    /* ---------- 加载 ---------- */
+    function load(size) {
+      stopPlay();
+      n = size;
+      UI.api('/api/nqueens/solve?n=' + size + '&max_solutions=3').then(function (res) {
+        if (res && res.steps) {
+          srcTag.textContent = '数据源：后端 API';
+          steps = res.steps;
+          solutionCount = res.solutionCount;
+        } else {
+          srcTag.textContent = '数据源：本地兜底';
+          var r = AlgoExt.nqueensSolve(size, 3);
+          steps = r.steps;
+          solutionCount = r.solutionCount;
+        }
+        cur = 0;
+        render();
+      });
+    }
+
+    function stopPlay() {
+      if (timer) { clearInterval(timer); timer = null; }
+      btnPlay.textContent = '▶ 播放过程';
+    }
+    function play() {
+      if (timer) { stopPlay(); return; }
+      if (cur >= steps.length) { cur = 0; render(); }
+      btnPlay.textContent = '⏸ 暂停';
+      var delay = steps.length > 800 ? 8 : (steps.length > 300 ? 20 : 90);
+      timer = setInterval(function () {
+        if (cur >= steps.length) { stopPlay(); return; }
+        cur++; render();
+      }, delay);
+    }
+
+    btnPlay.addEventListener('click', play);
+    btnStep.addEventListener('click', function () {
+      stopPlay();
+      if (cur < steps.length) { cur++; render(); }
+    });
+    btnReset.addEventListener('click', function () { stopPlay(); cur = 0; render(); });
+    progress.addEventListener('input', function () {
+      stopPlay(); cur = parseInt(progress.value, 10); render();
+    });
+    nSel.addEventListener('change', function () { load(parseInt(nSel.value, 10)); });
+    btnFast.addEventListener('click', function () {
+      stopPlay();
+      // 跳到第一个 solution 帧
+      for (var i = 0; i < steps.length; i++) {
+        if (steps[i].type === 'solution') { cur = i + 1; render(); return; }
+      }
+      cur = steps.length; render();
+    });
+
+    load(parseInt(nSel.value, 10));
+
+    UI.api('/api/nqueens/counts').then(function (res) {
+      var table = res && res.table ? res.table : [
+        { n: 4, solutions: 2 }, { n: 5, solutions: 10 }, { n: 6, solutions: 4 },
+        { n: 7, solutions: 40 }, { n: 8, solutions: 92 }
+      ];
+      var parts = [];
+      for (var i = 0; i < table.length; i++) parts.push(table[i].n + '皇后=' + table[i].solutions + '解');
+      countTable.textContent = parts.join(' ｜ ');
+    });
+  })();
+  </script>
+</body>
+</html>

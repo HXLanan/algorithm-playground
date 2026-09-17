@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>题目详情 · Algo Playground</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script>window.__ALGO_ACTIVE__ = 'problems.html';</script>
+</head>
+<body>
+  <main class="wrap">
+    <p class="info-line" style="margin-bottom:12px;">
+      <a href="problems.html" style="color:#5eead4;text-decoration:none;">← 返回题库</a>
+    </p>
+
+    <div id="host">
+      <section class="card"><p class="info-line">正在加载题目…</p></section>
+    </div>
+  </main>
+
+  <script src="../assets/js/nav.js"></script>
+  <script src="../assets/js/ui.js"></script>
+  <script>
+  (function () {
+    "use strict";
+    var host = document.getElementById('host');
+    var DIFF_COLOR = { '简单': '#34d399', '中等': '#fbbf24', '困难': '#fb7185' };
+
+    function getSlug() {
+      var m = location.search.match(/[?&]slug=([^&]+)/);
+      return m ? decodeURIComponent(m[1]) : '';
+    }
+
+    function esc(s) {
+      return String(s === undefined || s === null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    function render(p) {
+      var dc = DIFF_COLOR[p.difficulty] || '#9aa3c0';
+      var html = '';
+
+      // ---------- 标题区 ----------
+      html += '<section class="card">';
+      html += '<h1 style="font-size:24px;">' + p.lcId + '. ' + esc(p.title) + '</h1>';
+      html += '<p style="margin:10px 0;">';
+      html += '<span style="font-size:12px;padding:3px 10px;border-radius:20px;background:' + dc
+            + ';color:#0b0e1a;font-weight:700;">' + p.difficulty + '</span>';
+      html += '<span style="font-size:12px;padding:3px 10px;border-radius:20px;background:#232a45;'
+            + 'color:#9aa3c0;margin-left:8px;">' + esc(p.category) + '</span>';
+      (p.tags || []).forEach(function (t) {
+        html += '<span style="font-size:12px;padding:3px 10px;border-radius:20px;background:#232a45;'
+              + 'color:#9aa3c0;margin-left:6px;">' + esc(t) + '</span>';
+      });
+      html += '</p>';
+
+      // 关联可视化
+      if (p.relatedVisualizer) {
+        html += '<div style="margin-top:14px;padding:12px 14px;background:#161b2e;border:1px solid #2e3654;'
+              + 'border-radius:11px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">';
+        html += '<span style="font-size:22px;">' + (p.relatedVisualizer.icon || '🧩') + '</span>';
+        html += '<div style="flex:1 1 200px;">';
+        html += '<div style="font-weight:600;color:#5eead4;">' + esc(p.relatedVisualizer.title) + '</div>';
+        html += '<div style="font-size:12.5px;color:#8b96bd;margin-top:3px;">' +
+                esc(p.visHint || p.relatedVisualizer.subtitle || '') + '</div>';
+        html += '</div>';
+        html += '<a href="' + p.relatedVisualizer.page + '" style="padding:8px 16px;border-radius:9px;'
+              + 'background:#5eead4;color:#0b0e1a;text-decoration:none;font-weight:600;white-space:nowrap;">'
+              + '🧩 去看可视化演示</a>';
+        html += '</div>';
+      }
+      html += '</section>';
+
+      // ---------- 题目描述 ----------
+      html += '<section class="card"><h2>题目描述</h2>';
+      html += '<p style="line-height:1.9;">' + esc(p.desc) + '</p>';
+      if (p.examples && p.examples.length) {
+        html += '<div style="margin-top:14px;">';
+        p.examples.forEach(function (ex, i) {
+          html += '<div style="background:#0b0e1a;border-radius:9px;padding:11px 14px;margin-bottom:9px;'
+                + 'font-family:monospace;font-size:13px;line-height:1.8;">';
+          html += '<div style="color:#9aa3c0;">示例 ' + (i + 1) + '：</div>';
+          html += '<div><span style="color:#5eead4;">输入：</span>' + esc(ex.input) + '</div>';
+          html += '<div><span style="color:#fbbf24;">输出：</span>' + esc(ex.output) + '</div>';
+          if (ex.explain) html += '<div style="color:#8b96bd;">解释：' + esc(ex.explain) + '</div>';
+          html += '</div>';
+        });
+        html += '</div>';
+      }
+      if (p.hints && p.hints.length) {
+        html += '<p style="margin-top:14px;color:#9aa3c0;font-size:13.5px;">💡 提示：' +
+                p.hints.map(esc).join('　｜　') + '</p>';
+      }
+      html += '</section>';
+
+      // ---------- 在线判题 ----------
+      html += '<section class="card">';
+      html += '<h2>✍️ 在线判题</h2>';
+      html += '<p class="info-line">请编写函数 <code>' + esc(p.funcName) + '</code>，' +
+              '点击运行即可用测试用例验证。支持 <code>import collections/heapq/math</code> 等纯计算模块。</p>';
+      html += '<textarea id="codeArea" spellcheck="false" style="width:100%;min-height:200px;'
+            + 'margin-top:12px;background:#0b0e1a;color:#e6e9f5;border:1px solid #2e3654;'
+            + 'border-radius:11px;padding:14px;font-family:Consolas,monospace;font-size:13.5px;'
+            + 'line-height:1.65;resize:vertical;"></textarea>';
+      html += '<div class="btnrow" style="margin-top:12px;">';
+      html += '<button id="btnRun">▶ 运行测试</button>';
+      html += '<button id="btnRef" class="secondary">📋 填入参考答案</button>';
+      html += '<button id="btnClear" class="secondary">🧹 清空</button>';
+      html += '<span id="runStatus" class="info-line" style="margin-left:6px;"></span>';
+      html += '</div>';
+      html += '<div id="results"></div>';
+      html += '</section>';
+
+      // ---------- 参考解法 ----------
+      html += '<section class="card"><h2>📚 解题思路</h2>';
+      html += '<p class="info-line">建议先自己写、再看题解。解法按推荐程度排序。</p>';
+      (p.solutions || []).forEach(function (sol, i) {
+        html += '<div style="margin-top:16px;padding:14px;background:#161b2e;border:1px solid #2e3654;'
+              + 'border-radius:11px;">';
+        html += '<div style="font-weight:700;color:#5eead4;font-size:15px;">解法 ' + (i + 1) +
+                '：' + esc(sol.name) + '</div>';
+        html += '<div style="margin-top:6px;font-size:12.5px;color:#8b96bd;">';
+        html += '<span style="padding:2px 8px;border-radius:20px;background:#232a45;">⏱ ' + esc(sol.time) + '</span>';
+        html += '<span style="padding:2px 8px;border-radius:20px;background:#232a45;margin-left:6px;">💾 ' + esc(sol.space) + '</span>';
+        html += '</div>';
+        html += '<p style="margin-top:10px;line-height:1.8;font-size:14px;">' + esc(sol.idea) + '</p>';
+        html += '<pre style="margin-top:10px;background:#0b0e1a;border-radius:9px;padding:13px;'
+              + 'overflow-x:auto;font-family:Consolas,monospace;font-size:13px;line-height:1.65;'
+              + 'color:#cfd8f0;">' + esc(sol.code) + '</pre>';
+        html += '<button class="secondary loadCode" data-idx="' + i + '" style="margin-top:10px;'
+              + 'padding:6px 14px;font-size:13px;">↑ 填入编辑器试运行</button>';
+        html += '</div>';
+      });
+      html += '</section>';
+
+      host.innerHTML = html;
+
+      // ---------- 绑定事件 ----------
+      var codeArea = document.getElementById('codeArea');
+      var results = document.getElementById('results');
+      var runStatus = document.getElementById('runStatus');
+      codeArea.value = 'def ' + p.funcName + '():\n    # 在这里写你的代码\n    pass\n';
+
+      document.getElementById('btnRun').addEventListener('click', function () {
+        runStatus.textContent = '正在运行…';
+        runStatus.style.color = '#9aa3c0';
+        UI.api('/api/problems/' + p.slug + '/run', {
+          method: 'POST', body: { code: codeArea.value }
+        }).then(function (res) {
+          if (!res) {
+            runStatus.textContent = '⚠️ 未连接后端，无法判题';
+            runStatus.style.color = '#fbbf24';
+            return;
+          }
+          renderResult(res);
+        });
+      });
+
+      document.getElementById('btnRef').addEventListener('click', function () {
+        runStatus.textContent = '正在运行参考答案…';
+        UI.api('/api/problems/' + p.slug + '/run', {
+          method: 'POST', body: { useReference: true }
+        }).then(function (res) {
+          if (res && res.ok) {
+            codeArea.value = (p.solutions[0] || {}).code || '';
+            renderResult(res);
+          } else if (res) {
+            renderResult(res);
+          }
+        });
+      });
+
+      document.getElementById('btnClear').addEventListener('click', function () {
+        codeArea.value = '';
+        results.innerHTML = '';
+        runStatus.textContent = '';
+      });
+
+      Array.prototype.forEach.call(document.querySelectorAll('.loadCode'), function (btn) {
+        btn.addEventListener('click', function () {
+          var idx = parseInt(btn.getAttribute('data-idx'), 10);
+          codeArea.value = p.solutions[idx].code;
+          codeArea.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          runStatus.textContent = '已填入解法 ' + (idx + 1) + '，点「运行测试」验证';
+          runStatus.style.color = '#5eead4';
+        });
+      });
+    }
+
+    function renderResult(res) {
+      var runStatus = document.getElementById('runStatus');
+      var results = document.getElementById('results');
+
+      if (res.error) {
+        runStatus.textContent = '❌ ' + res.error;
+        runStatus.style.color = '#fb7185';
+        results.innerHTML = '';
+        return;
+      }
+
+      if (res.ok) {
+        runStatus.textContent = '✅ 全部通过！' + res.passed + '/' + res.total +
+                                ' ｜ 总耗时 ' + res.timeMs + ' ms';
+        runStatus.style.color = '#34d399';
+      } else {
+        runStatus.textContent = '⚠️ ' + res.passed + '/' + res.total + ' 通过，' +
+                                (res.total - res.passed) + ' 个用例失败';
+        runStatus.style.color = '#fbbf24';
+      }
+
+      var h = '<div style="margin-top:14px;">';
+      res.results.forEach(function (r) {
+        var col = r.passed ? '#34d399' : '#fb7185';
+        var mark = r.passed ? '✅' : '❌';
+        h += '<div style="padding:10px 13px;border-radius:9px;margin-bottom:8px;'
+           + 'background:#0b0e1a;border-left:3px solid ' + col + ';font-family:monospace;font-size:12.5px;'
+           + 'line-height:1.75;">';
+        h += '<div style="color:' + col + ';font-weight:700;">' + mark + ' 用例 ' + r.index +
+             '　<span style="color:#5d6a92;font-weight:400;">' + (r.timeMs || 0) + ' ms</span></div>';
+        h += '<div><span style="color:#9aa3c0;">输入：</span>' + esc(r.args) + '</div>';
+        h += '<div><span style="color:#9aa3c0;">期望：</span>' + esc(r.expect) + '</div>';
+        if (r.error) {
+          h += '<div style="color:#fb7185;">错误：' + esc(r.error) + '</div>';
+        } else {
+          h += '<div><span style="color:#9aa3c0;">实际：</span>' +
+               '<span style="color:' + col + ';">' + esc(r.actual) + '</span></div>';
+        }
+        h += '</div>';
+      });
+      h += '</div>';
+      results.innerHTML = h;
+    }
+
+    // ---------- 启动 ----------
+    var slug = getSlug();
+    if (!slug) {
+      host.innerHTML = '<section class="card"><p>缺少 slug 参数。' +
+                       '<a href="problems.html" style="color:#5eead4;">返回题库</a></p></section>';
+      return;
+    }
+
+    UI.api('/api/problems/' + slug).then(function (p) {
+      if (p && p.slug) {
+        render(p);
+      } else {
+        host.innerHTML = '<section class="card"><p>⚠️ 未能加载题目（后端未连接或题目不存在）。' +
+                         '<a href="problems.html" style="color:#5eead4;">返回题库</a></p></section>';
+      }
+    });
+  })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>快速排序 / 归并排序 · Algo Playground</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script>window.__ALGO_ACTIVE__ = 'divide-sort.html';</script>
+</head>
+<body>
+  <main class="wrap">
+    <h1>⚡ 分治排序：快速排序 / 归并排序</h1>
+    <p class="sub">
+      上一页的三种排序都是 O(n²)。这一页的两个算法用<b>分治</b>把复杂度降到 <b>O(n log n)</b>。
+      点播放看它们如何"分而治之"，也可以单步查看每一次比较与移动。
+    </p>
+
+    <section class="card">
+      <div class="btnrow">
+        <span class="tag">算法</span>
+        <select id="algoSel">
+          <option value="quick">快速排序（选基准分区）</option>
+          <option value="merge">归并排序（对半合并）</option>
+        </select>
+        <span class="tag">柱数</span>
+        <select id="sizeSel">
+          <option value="8">8 根</option>
+          <option value="12" selected>12 根</option>
+          <option value="20">20 根</option>
+          <option value="30">30 根</option>
+        </select>
+        <button id="btnShuffle" class="secondary">🔄 重新洗牌</button>
+        <button id="btnPlay">▶ 播放</button>
+        <button id="btnStep" class="amber">⏭ 单步</button>
+        <span id="srcTag" class="tag">数据源：本地</span>
+      </div>
+      <div class="info-line">
+        速度 <input type="range" id="speed" min="1" max="100" value="55" style="width:170px; vertical-align:middle;">
+      </div>
+      <div class="canvas-host" style="margin-top:14px;">
+        <canvas id="cv" width="900" height="330"></canvas>
+      </div>
+      <p class="info-line" id="log"></p>
+      <p class="info-line" id="stats"></p>
+    </section>
+
+    <section class="card-grid">
+      <div class="card">
+        <h2>🔹 快速排序：选基准，分两边</h2>
+        <p>① 从区间里挑一个<b>基准值 (pivot)</b><br>
+           ② 把比它小的放左边、比它大的放右边（<b>分区</b>）<br>
+           ③ 基准归位后，左右两段分别递归</p>
+        <p class="info-line">平均 O(n log n)，是实践中最快的通用排序。
+           但如果每次都选到最大/最小值当基准，会退化成 O(n²)——
+           所以工程实现常用"随机基准"或"三数取中"。</p>
+      </div>
+      <div class="card">
+        <h2>🔹 归并排序：对半切，再合并</h2>
+        <p>① 把数组<b>对半切开</b><br>
+           ② 两半分别递归排序<br>
+           ③ 把两个<b>有序段合并</b>成一个有序段</p>
+        <p class="info-line">复杂度<b>稳定</b>在 O(n log n)，且是稳定排序。
+           代价是需要 O(n) 额外空间。Java 的 Arrays.sort 对对象数组
+           用的就是归并（TimSort）。</p>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>为什么分治能降到 O(n log n)？</h2>
+      <p>每一层把问题<b>对半分裂</b>，一共 log n 层；每层处理的元素总数仍是 n。
+         所以总工作量 = <b>n × log n</b>。</p>
+      <p class="info-line">对比：冒泡要 n × n。当 n = 100 万时，
+         n² 是 10¹²，而 n log n 只要 2×10⁷ —— 相差五万倍。</p>
+    </section>
+  </main>
+
+  <script src="../assets/js/nav.js"></script>
+  <script src="../assets/js/related.js"></script>
+  <script src="../assets/js/algo-core.js"></script>
+  <script src="../assets/js/algo-core-ext.js"></script>
+  <script src="../assets/js/ui.js"></script>
+  <script>
+  (function () {
+    "use strict";
+    var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+    var algoSel = document.getElementById('algoSel'), sizeSel = document.getElementById('sizeSel');
+    var speedEl = document.getElementById('speed'), logEl = document.getElementById('log');
+    var statsEl = document.getElementById('stats'), srcTag = document.getElementById('srcTag');
+    var btnPlay = document.getElementById('btnPlay'), btnStep = document.getElementById('btnStep');
+    var btnShuffle = document.getElementById('btnShuffle');
+
+    var W = 900, H = 330, topPad = 30, baseline = H - 46;
+    var n = parseInt(sizeSel.value, 10);
+    var originSeq = [], sim = [], stepIdx = -1;
+    var running = false, timer = null, done = false, loading = false;
+    var hl = { a: -1, b: -1, mark: -1, lo: -1, hi: -1 };
+
+    function draw(list) {
+      ctx.clearRect(0, 0, W, H);
+      var maxV = 1, i;
+      for (i = 0; i < list.length; i++) if (list[i] > maxV) maxV = list[i];
+      var span = baseline - topPad, slot = W / Math.max(1, list.length);
+
+      // 区间高亮背景
+      if (hl.lo >= 0 && hl.hi >= 0 && hl.hi >= hl.lo) {
+        ctx.fillStyle = 'rgba(94,234,212,0.09)';
+        ctx.fillRect(hl.lo * slot, topPad - 14, (hl.hi - hl.lo + 1) * slot, span + 24);
+      }
+
+      ctx.strokeStyle = '#435079';
+      ctx.beginPath(); ctx.moveTo(10, baseline + 0.5); ctx.lineTo(W - 10, baseline + 0.5); ctx.stroke();
+
+      for (i = 0; i < list.length; i++) {
+        var h = span * (list[i] / maxV);
+        var x = i * slot + slot * 0.12, bw = slot * 0.76, y = baseline - h;
+        var col;
+        if (done) col = '#34d399';
+        else if (i === hl.a || i === hl.b) col = '#fbbf24';
+        else if (i === hl.mark) col = '#f472b6';
+        else col = '#5d73c0';
+        ctx.fillStyle = col;
+        ctx.fillRect(x, y, bw, h);
+        var dark = (col !== '#5d73c0');
+        ctx.fillStyle = dark ? '#0b0e1a' : '#e4ecff';
+        ctx.font = (slot > 45 ? 'bold 13px' : 'bold 10px') + ' sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(String(list[i]), x + bw / 2, y - 7);
+      }
+    }
+
+    function render() {
+      if (stepIdx < 0) {
+        hl = { a: -1, b: -1, mark: -1, lo: -1, hi: -1 };
+        draw(originSeq);
+        logEl.textContent = '已生成 ' + n + ' 根柱。点 ▶ 播放。';
+        statsEl.textContent = '比较 0 次 ｜ 写入 0 次';
+        return;
+      }
+      var s = sim[stepIdx];
+      hl = { a: s.a, b: s.b, mark: s.mark, lo: s.lo, hi: s.hi };
+      draw(s.list);
+      logEl.textContent = '步骤 ' + (stepIdx + 1) + '/' + sim.length + '：' + s.desc;
+      statsEl.textContent = '比较 ' + s.c + ' 次 ｜ 写入 ' + s.w + ' 次';
+    }
+
+    function buildSim(cb) {
+      var algo = algoSel.value;
+      UI.api('/api/divide-sort/run', { method: 'POST', body: { array: originSeq, algo: algo } })
+        .then(function (res) {
+          if (res && res.steps) { srcTag.textContent = '数据源：后端 API'; cb(res.steps); }
+          else { srcTag.textContent = '数据源：本地兜底';
+                 cb(AlgoExt.divideSortSteps(originSeq, algo).steps); }
+        });
+    }
+
+    function resetData() {
+      stopAuto(); done = false; loading = true; sim = [];
+      btnPlay.disabled = btnStep.disabled = true;
+      originSeq = AlgoCore.randomArray(n);
+      stepIdx = -1; render();
+      buildSim(function (steps) {
+        sim = steps; loading = false;
+        btnPlay.disabled = btnStep.disabled = false;
+        if (stepIdx < 0) render();
+      });
+    }
+    function stopAuto() {
+      running = false;
+      if (timer) { clearInterval(timer); timer = null; }
+      btnPlay.textContent = '▶ 播放';
+    }
+    function startTimer() {
+      if (timer) clearInterval(timer);
+      timer = setInterval(tick, Math.max(20, 1200 - parseInt(speedEl.value, 10) * 11));
+    }
+    function tick() {
+      if (done) { stopAuto(); return; }
+      if (stepIdx + 1 >= sim.length) { finish(); return; }
+      stepIdx++; render();
+    }
+    function finish() {
+      done = true; hl = { a: -1, b: -1, mark: -1, lo: -1, hi: -1 };
+      if (sim.length) {
+        draw(sim[sim.length - 1].list);
+        var last = sim[sim.length - 1];
+        logEl.textContent = '✅ 排序完成！比较 ' + last.c + ' 次、写入 ' + last.w + ' 次。';
+      }
+      stopAuto();
+    }
+    function togglePlay() {
+      if (loading) return;
+      if (done || !sim.length) { resetData(); return; }
+      if (running) { stopAuto(); return; }
+      running = true; btnPlay.textContent = '⏸ 暂停'; startTimer();
+    }
+    function stepOnce() {
+      if (loading) return;
+      if (!sim.length) { resetData(); return; }
+      if (running) stopAuto();
+      if (done) return;
+      if (stepIdx + 1 >= sim.length) { finish(); return; }
+      stepIdx++; render();
+    }
+
+    btnPlay.addEventListener('click', togglePlay);
+    btnStep.addEventListener('click', stepOnce);
+    btnShuffle.addEventListener('click', resetData);
+    algoSel.addEventListener('change', resetData);
+    sizeSel.addEventListener('change', function () { n = parseInt(sizeSel.value, 10); resetData(); });
+    speedEl.addEventListener('input', function () { if (running) startTimer(); });
+    resetData();
+  })();
+  </script>
+</body>
+</html>

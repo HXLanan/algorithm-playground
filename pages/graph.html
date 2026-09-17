@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>图算法 · 最短路与遍历 · Algo Playground</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script>window.__ALGO_ACTIVE__ = 'graph.html';</script>
+</head>
+<body>
+  <main class="wrap">
+    <h1>🕸️ 图算法：最短路与遍历</h1>
+    <p class="sub">
+      同一张图上，三种算法的"扩散形态"截然不同：
+      <b>Dijkstra</b> 按距离扩散、<b>BFS</b> 按层扩散、<b>DFS</b> 一条道走到黑。
+      点播放看节点被访问的顺序。
+    </p>
+
+    <section class="card">
+      <div class="btnrow">
+        <span class="tag">算法</span>
+        <select id="algoSel">
+          <option value="dijkstra">Dijkstra 最短路</option>
+          <option value="bfs">广度优先 BFS</option>
+          <option value="dfs">深度优先 DFS</option>
+        </select>
+        <span class="tag">起点</span>
+        <select id="startSel"></select>
+        <button id="btnRun">▶ 播放</button>
+        <button id="btnStep" class="amber">⏭ 单步</button>
+        <button id="btnNew" class="secondary">🎲 换一张图</button>
+        <button id="btnCompare" class="pink">📊 三算法对比</button>
+        <span id="srcTag" class="tag">数据源：本地</span>
+      </div>
+      <div class="canvas-host" style="margin-top:14px;">
+        <canvas id="cv" width="700" height="560"></canvas>
+      </div>
+      <p class="info-line" id="msg" style="color:#fbbf24;font-weight:600;"></p>
+      <p class="info-line" id="stats"></p>
+      <p class="info-line" id="cmpResult"></p>
+    </section>
+
+    <section class="card">
+      <h2>三种算法的本质区别</h2>
+      <p>🔹 <b>Dijkstra</b>：维护"到起点的已知最短距离"，每次取出距离最小的未访问节点，用它去"松弛"邻居。
+         要求边权非负。带权图的最短路标准解法。</p>
+      <p>🔹 <b>BFS</b>：用队列按层扩散。在<b>无权图</b>（或边权都为 1）上，第一次到达某点就是最短路径。</p>
+      <p>🔹 <b>DFS</b>：用栈一路深入，走不通才回溯。它<b>不保证最短</b>，但擅长遍历全图、
+         检测环、求连通分量、拓扑排序。</p>
+      <p class="info-line">共同点：三者都要"标记已访问"，否则会在环里无限打转——这是图算法最基本的技巧。</p>
+    </section>
+  </main>
+
+  <script src="../assets/js/nav.js"></script>
+  <script src="../assets/js/related.js"></script>
+  <script src="../assets/js/algo-core-ext.js"></script>
+  <script src="../assets/js/ui.js"></script>
+  <script>
+  (function () {
+    "use strict";
+    var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+    var algoSel = document.getElementById('algoSel'), startSel = document.getElementById('startSel');
+    var btnRun = document.getElementById('btnRun'), btnStep = document.getElementById('btnStep');
+    var btnNew = document.getElementById('btnNew'), btnCompare = document.getElementById('btnCompare');
+    var msg = document.getElementById('msg'), statsEl = document.getElementById('stats');
+    var cmpResult = document.getElementById('cmpResult'), srcTag = document.getElementById('srcTag');
+
+    var W = 700, H = 560, PAD = 70;
+    var graph = null, result = null;
+    var cur = 0, timer = null;
+
+    function toXY(p) {
+      return [PAD + p[0] * (W - PAD * 2), PAD + p[1] * (H - PAD * 2)];
+    }
+
+    /* ---------- 绘制 ---------- */
+    function draw() {
+      ctx.clearRect(0, 0, W, H);
+      if (!graph) return;
+
+      var s = (result && cur > 0) ? result.steps[cur - 1] : null;
+      var visitedOrder = [];
+      if (result) {
+        // 按已播放的步数截取访问顺序
+        for (var k = 0; k < Math.min(cur, result.steps.length); k++) {
+          var st = result.steps[k];
+          if (st.visit !== undefined && visitedOrder.indexOf(st.visit) < 0) visitedOrder.push(st.visit);
+        }
+      }
+      var isVisited = {};
+      for (var vi = 0; vi < visitedOrder.length; vi++) isVisited[visitedOrder[vi]] = true;
+
+      // 生成树边（用 parent 高亮）
+      var treeEdge = {};
+      if (result && result.tree) {
+        for (var t = 0; t < result.tree.length; t++) {
+          var e0 = result.tree[t];
+          treeEdge[e0[0] + '-' + e0[1]] = true;
+          treeEdge[e0[1] + '-' + e0[0]] = true;
+        }
+      }
+
+      // 画边
+      for (var ei = 0; ei < graph.edges.length; ei++) {
+        var e = graph.edges[ei];
+        var p1 = toXY(graph.pos[e.u]), p2 = toXY(graph.pos[e.v]);
+        var inTree = treeEdge[e.u + '-' + e.v];
+        ctx.strokeStyle = inTree ? 'rgba(52,211,153,0.85)' : 'rgba(90,105,150,0.35)';
+        ctx.lineWidth = inTree ? 3.5 : 1.8;
+        ctx.beginPath();
+        ctx.moveTo(p1[0], p1[1]);
+        ctx.lineTo(p2[0], p2[1]);
+        ctx.stroke();
+
+        // 边权
+        if (graph.weighted) {
+          var mx = (p1[0] + p2[0]) / 2, my = (p1[1] + p2[1]) / 2;
+          ctx.fillStyle = '#0b0e1a';
+          ctx.beginPath();
+          ctx.arc(mx, my, 11, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = inTree ? '#34d399' : '#8b96bd';
+          ctx.font = 'bold 11px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(String(e.w), mx, my);
+        }
+      }
+
+      // 画节点
+      for (var ni = 0; ni < graph.n; ni++) {
+        var p = toXY(graph.pos[ni]);
+        var isCur = s && s.visit === ni;
+        var seen = isVisited[ni];
+        var isStart = result && result.start === ni;
+
+        ctx.beginPath();
+        ctx.arc(p[0], p[1], isCur ? 24 : 20, 0, Math.PI * 2);
+        ctx.fillStyle = isCur ? '#fbbf24' : (isStart ? '#5eead4' : (seen ? '#3f8f7a' : '#2b3350'));
+        ctx.fill();
+        ctx.strokeStyle = isStart ? '#5eead4' : '#39405e';
+        ctx.lineWidth = 2.5;
+        ctx.stroke();
+
+        ctx.fillStyle = (isCur || isStart || seen) ? '#0b0e1a' : '#cfd8f0';
+        ctx.font = 'bold 15px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(String(ni), p[0], p[1]);
+
+        // 距离标注
+        if (result && result.dist && result.dist[ni] !== undefined && seen) {
+          ctx.fillStyle = '#5eead4';
+          ctx.font = '11px sans-serif';
+          ctx.fillText('d=' + result.dist[ni], p[0], p[1] + 34);
+        }
+      }
+
+      // 标题
+      ctx.fillStyle = '#9aa3c0';
+      ctx.font = '14px sans-serif';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'alphabetic';
+      ctx.fillText('已访问 ' + visitedOrder.length + ' / ' + graph.n + ' 个节点' +
+                   (result ? '（' + result.algoName + '）' : ''), 18, 26);
+    }
+
+    function updateUI() {
+      if (!result) return;
+      var total = result.steps.length;
+      var s = (cur > 0 && cur <= total) ? result.steps[cur - 1] : null;
+      msg.textContent = s ? s.msg : '准备开始…';
+      statsEl.textContent = '步骤 ' + cur + ' / ' + total +
+        '　访问顺序：' + result.order.join(' → ');
+    }
+    function render() { draw(); updateUI(); }
+
+    /* ---------- 加载 ---------- */
+    function loadGraph(newGraph, cb) {
+      var body = { algo: algoSel.value, start: parseInt(startSel.value || 0, 10),
+                   new_graph: !!newGraph, n: 8 };
+      if (!newGraph && graph) body.graph = graph;
+      UI.api('/api/graph/run', { method: 'POST', body: body }).then(function (res) {
+        if (res && res.steps) { srcTag.textContent = '数据源：后端 API'; }
+        else {
+          srcTag.textContent = '数据源：本地兜底';
+          var g = (!newGraph && graph) ? graph : AlgoExt.randomGraphJS(8, 6);
+          var r = AlgoExt.graphRun(g, parseInt(startSel.value || 0, 10), algoSel.value);
+          res = r; res.steps = r.steps; res.order = r.order; res.dist = r.dist;
+          res.tree = r.tree; res.algoName = algoSel.value; res.start = parseInt(startSel.value || 0, 10);
+        }
+        graph = res.graph;
+        result = res;
+        cur = 0;
+        fillStartOptions();
+        render();
+        if (cb) cb();
+      });
+    }
+    function fillStartOptions() {
+      if (!graph) return;
+      var want = parseInt(startSel.value || 0, 10);
+      if (startSel.options.length !== graph.n) {
+        startSel.innerHTML = '';
+        for (var i = 0; i < graph.n; i++) {
+          var o = document.createElement('option');
+          o.value = i; o.textContent = '节点 ' + i;
+          startSel.appendChild(o);
+        }
+        startSel.value = String(Math.min(want, graph.n - 1));
+      }
+    }
+
+    function stopPlay() { if (timer) { clearInterval(timer); timer = null; } }
+    function play() {
+      if (timer) { stopPlay(); return; }
+      if (!result) { loadGraph(false); return; }
+      if (cur >= result.steps.length) { cur = 0; render(); }
+      timer = setInterval(function () {
+        if (cur >= result.steps.length) { stopPlay(); return; }
+        cur++; render();
+      }, 520);
+    }
+    function stepOnce() {
+      stopPlay();
+      if (!result) { loadGraph(false); return; }
+      if (cur < result.steps.length) { cur++; render(); }
+    }
+
+    btnRun.addEventListener('click', play);
+    btnStep.addEventListener('click', stepOnce);
+    btnNew.addEventListener('click', function () { stopPlay(); graph = null; loadGraph(true); });
+    algoSel.addEventListener('change', function () { stopPlay(); loadGraph(false); });
+    startSel.addEventListener('change', function () { stopPlay(); loadGraph(false); });
+    btnCompare.addEventListener('click', function () {
+      stopPlay();
+      cmpResult.textContent = '正在对比…';
+      UI.api('/api/graph/compare', { method: 'POST', body: { graph: graph, start: parseInt(startSel.value || 0, 10) } })
+        .then(function (res) {
+          if (res && res.comparison) {
+            var out = [];
+            var keys = ['dijkstra', 'bfs', 'dfs'];
+            for (var i = 0; i < keys.length; i++) {
+              var v = res.comparison[keys[i]];
+              out.push(v.name + '：访问顺序 ' + v.order.join('→'));
+            }
+            cmpResult.textContent = '📊 ' + out.join('　｜　');
+          } else {
+            var out2 = [], ks = ['dijkstra', 'bfs', 'dfs'];
+            for (var j = 0; j < ks.length; j++) {
+              var r = AlgoExt.graphRun(graph, parseInt(startSel.value || 0, 10), ks[j]);
+              out2.push(ks[j] + '：' + r.order.join('→'));
+            }
+            cmpResult.textContent = '📊 (本地) ' + out2.join('　｜　');
+          }
+        });
+    });
+
+    loadGraph(false);
+  })();
+  </script>
+</body>
+</html>

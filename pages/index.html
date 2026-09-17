@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Algo Playground · 趣味算法讲解合集</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script>window.__ALGO_ACTIVE__ = 'index.html';</script>
+</head>
+<body>
+  <main class="wrap">
+    <section class="card hero">
+      <h1>🧩 算法，原来是这么回事</h1>
+      <p class="sub">
+        把抽象算法还原成「看得见、玩得起来」的交互动画。
+        Python 后端负责计算、前端 Canvas 负责呈现；即使离线打开，前端也有本地算法兜底。
+      </p>
+      <p class="info-line" id="backendState">正在检测后端服务…</p>
+    </section>
+
+    <!-- 题库入口 -->
+    <section class="card" style="border-color:#5eead4;background:linear-gradient(135deg,#132a2a 0%,#161b2e 70%);">
+      <div style="display:flex;align-items:center;gap:18px;flex-wrap:wrap;">
+        <div style="font-size:44px;">📝</div>
+        <div style="flex:1 1 260px;min-width:220px;">
+          <h2 style="color:#5eead4;font-size:21px;margin-bottom:6px;">LeetCode 题库 · 30+ 道经典题</h2>
+          <p style="color:#d3d8ee;font-size:14.5px;">
+            看得懂 ≠ 写得出。这里把每个可视化演示都对应到<b>真实面试题</b>：
+            分类题单、多解法思路、<b>在线判题</b>跑测试用例，卡住了还能一键跳回动画。
+          </p>
+          <p class="info-line" id="libStat">正在加载题库统计…</p>
+        </div>
+        <a href="problems.html" style="padding:11px 22px;border-radius:10px;background:#5eead4;color:#0b0e1a;
+           text-decoration:none;font-weight:700;white-space:nowrap;">进入题库 →</a>
+      </div>
+    </section>
+
+    <div id="catalog"></div>
+
+    <section class="card">
+      <h2>项目结构（分层架构）</h2>
+      <p class="info-line">
+        算法层 <code>server/algo/</code> → 服务层 <code>server/services/</code> →
+        路由层 <code>server/routes/</code> → 前端 <code>pages/</code> + <code>assets/</code>
+      </p>
+      <p class="info-line">详细架构设计见项目根目录 <b>ARCHITECTURE.md</b>；
+        每个算法页都标注了「数据源：后端 API / 本地兜底」，方便确认运行方式。</p>
+    </section>
+  </main>
+
+  <script src="../assets/js/nav.js"></script>
+  <script src="../assets/js/ui.js"></script>
+  <script>
+  (function () {
+    "use strict";
+
+    // 离线兜底目录（与 server/catalog.py 保持一致）
+    var FALLBACK = [
+      { page:'sort.html', icon:'🧱', title:'排序算法可视化', subtitle:'冒泡 / 选择 / 插入', desc:'柱条像气泡一样上浮归位，可调速、可单步、可对比三种写法。', category:'排序与基础' },
+      { page:'wheat.html', icon:'🌾', title:'麦粒棋盘 · 指数爆炸', subtitle:'时间复杂度 O(2ⁿ)', desc:'一格翻一倍的麦粒，第 64 格就能让整个王国破产。', category:'排序与基础' },
+      { page:'fibonacci.html', icon:'🐰', title:'兔子农场 · 斐波那契', subtitle:'递归与数列增长', desc:'每对兔子每月生一对，长出 1、1、2、3、5、8…… 向日葵也长这样。', category:'排序与基础' },
+      { page:'genetic.html', icon:'🧬', title:'遗传算法 · 小世界', subtitle:'选择-交叉-变异', desc:'一群随机小点靠进化自发聚集到金峰，算法自己找出答案。', category:'智能与涌现' },
+      { page:'life.html', icon:'🦠', title:'康威生命游戏', subtitle:'元胞自动机 · 涌现', desc:'三条规则就能涌现出滑翔机、脉冲星——最简单的规则，最复杂的生命。', category:'智能与涌现' },
+      { page:'pathfinding.html', icon:'🗺️', title:'A* 寻路可视化', subtitle:'A* / Dijkstra / BFS / DFS', desc:'鼠标画墙，看搜索如何扩散并找到路径；四种算法同台对比搜索范围。', category:'图与树' },
+      { page:'hanoi.html', icon:'🗼', title:'汉诺塔', subtitle:'递归 · 又是 2ⁿ−1', desc:'三根柱子搬圆盘，n 个盘要 2ⁿ−1 步——和麦粒棋盘遥相呼应的指数爆炸。', category:'排序与基础' },
+      { page:'nqueens.html', icon:'♛', title:'N 皇后 · 回溯法', subtitle:'试探 → 冲突 → 撤回', desc:'皇后逐个放置，走不通就撤回换位，回溯法的经典教具。', category:'图与树' },
+      { page:'montecarlo.html', icon:'🎲', title:'蒙特卡罗求 π', subtitle:'概率算法', desc:'随机撒点估算圆周率，撒得越多越准——精度只按 1/√N 提升。', category:'数学之美' },
+      { page:'mandelbrot.html', icon:'🌀', title:'曼德勃罗集', subtitle:'分形 · 无限细节', desc:'z←z²+c 的简单迭代，画出无限自相似的边界；可无限放大探索。', category:'数学之美' },
+      { page:'aco.html', icon:'🐜', title:'蚁群算法', subtitle:'信息素 · 正反馈', desc:'蚂蚁边走边留信息素，短路径越走越浓，群体自发找出最优路线。', category:'智能与涌现' },
+      { page:'kmp.html', icon:'🔤', title:'KMP 字符串匹配', subtitle:'next 数组的魔法', desc:'失配时主串指针永不回头，靠 next 数组一口气滑到下一个可匹配位。', category:'查找与字符串' },
+      { page:'divide-sort.html', icon:'⚡', title:'快速排序 / 归并排序', subtitle:'分治思想 · O(n log n)', desc:'快排选基准分区、归并对半合并——分治让排序从 O(n²) 跃升到 O(n log n)。', category:'排序与基础' },
+      { page:'binary-search.html', icon:'🎯', title:'二分查找', subtitle:'每次砍掉一半', desc:'有序数组中每次比较排除一半候选，100 万个数也只要约 20 次比较。', category:'查找与字符串' },
+      { page:'fast-power.html', icon:'🚀', title:'快速幂', subtitle:'O(log n) 的魔法', desc:'把指数拆成二进制，乘法次数从 n 次降到 log₂n 次——加密算法的基石。', category:'查找与字符串' },
+      { page:'graph.html', icon:'🕸️', title:'图算法 · 最短路与遍历', subtitle:'Dijkstra / BFS / DFS', desc:'同一张图上三种算法扩散形态截然不同：按距离、按层、一路深入。', category:'图与树' },
+      { page:'bst.html', icon:'🌳', title:'二叉搜索树', subtitle:'中序遍历即升序', desc:'左小右大的结构让查找 O(log n)——但插入顺序不对就会退化成链表。', category:'图与树' },
+      { page:'heap.html', icon:'⛰️', title:'二叉堆与优先队列', subtitle:'上浮 / 下沉 O(log n)', desc:'用数组就能实现的完全二叉树，取最小值 O(1)，是 Top-K 问题的利器。', category:'图与树' },
+      { page:'knapsack.html', icon:'🎒', title:'0-1 背包问题', subtitle:'动态规划入门', desc:'容量有限、每件物品只能选一次，看 DP 表如何逐格填出最优解。', category:'回溯与动态规划' },
+      { page:'lcs.html', icon:'🧬', title:'最长公共子序列', subtitle:'二维动态规划', desc:'两行两列填表格，相同字符斜着 +1——git diff 和 DNA 比对的底层算法。', category:'回溯与动态规划' },
+      { page:'prime-sieve.html', icon:'🔢', title:'埃拉托斯特尼筛法', subtitle:'O(n log log n)', desc:'从最小素数开始划掉它的所有倍数，剩下的就是素数——快得惊人。', category:'数学之美' },
+      { page:'josephus.html', icon:'⭕', title:'约瑟夫环', subtitle:'从模拟到递推', desc:'围成一圈报数出列，看着像要模拟 O(n·k)，其实一行递推就能 O(n) 算完。', category:'数学之美' },
+      { page:'consistent-hash.html', icon:'💠', title:'一致性哈希', subtitle:'分布式系统的基石', desc:'把哈希空间弯成环，增删服务器只迁移一小段数据——Redis Cluster 的核心。', category:'工程与分布式' },
+      { page:'topo-sort.html', icon:'🔗', title:'拓扑排序', subtitle:'Kahn 入度法 / DFS', desc:'给有依赖的任务排出执行顺序；顺带检测「循环依赖」这种致命问题。', category:'图与树' },
+      { page:'sliding-window.html', icon:'🪟', title:'滑动窗口', subtitle:'双指针 · O(n)', desc:'两个指针维护一个区间，把「枚举所有子区间」的 O(n²) 压缩成 O(n)。', category:'查找与字符串' }
+    ];
+
+    var CATEGORY_ORDER = ['排序与基础', '查找与字符串', '图与树',
+                          '回溯与动态规划', '数学之美', '智能与涌现', '工程与分布式'];
+
+    function render(items) {
+      var groups = {};
+      for (var i = 0; i < items.length; i++) {
+        var it = items[i];
+        var cat = it.category || '其他';
+        if (!groups[cat]) groups[cat] = [];
+        groups[cat].push(it);
+      }
+
+      var cats = Object.keys(groups);
+      cats.sort(function (a, b) {
+        var ia = CATEGORY_ORDER.indexOf(a), ib = CATEGORY_ORDER.indexOf(b);
+        if (ia < 0) ia = 99;
+        if (ib < 0) ib = 99;
+        return ia - ib;
+      });
+
+      var host = document.getElementById('catalog');
+      host.innerHTML = '';
+
+      cats.forEach(function (cat) {
+        var h = document.createElement('h2');
+        h.textContent = cat;
+        h.style.cssText = 'margin:26px 0 4px;font-size:17px;color:#9aa3c0;letter-spacing:1px;';
+        host.appendChild(h);
+
+        var grid = document.createElement('div');
+        grid.className = 'tiles';
+        groups[cat].forEach(function (it) {
+          var a = document.createElement('a');
+          a.className = 'tile';
+          a.href = it.page;
+          a.innerHTML =
+            '<div class="emoji">' + (it.icon || '📘') + '</div>' +
+            '<h3>' + it.title + '</h3>' +
+            '<p style="color:#fbbf24;font-size:12px;margin-bottom:4px;">' + (it.subtitle || '') + '</p>' +
+            '<p>' + (it.desc || '') + '</p>';
+          grid.appendChild(a);
+        });
+        host.appendChild(grid);
+      });
+
+      var count = document.getElementById('algoCount');
+      if (count) count.textContent = items.length;
+    }
+
+    // 后端优先
+    UI.api('/api/catalog').then(function (res) {
+      if (res && res.items && res.items.length) {
+        render(res.items);
+      } else {
+        render(FALLBACK);
+      }
+    });
+
+    UI.api('/api/health').then(function (r) {
+      var el = document.getElementById('backendState');
+      if (r && r.status === 'ok') {
+        el.textContent = '✅ 后端服务已连接（由 Python 计算，结果最权威）';
+        el.style.color = '#34d399';
+      } else {
+        el.textContent = '⚠️ 未检测到后端服务，页面将使用前端本地算法兜底运行（功能同样完整）';
+        el.style.color = '#fbbf24';
+      }
+    });
+
+    // 题库统计
+    UI.api('/api/problems/meta').then(function (res) {
+      var el = document.getElementById('libStat');
+      if (res && res.stats) {
+        var s = res.stats;
+        el.textContent = '共 ' + s.total + ' 道题（简单 ' + s.byDifficulty['简单'] +
+          ' / 中等 ' + s.byDifficulty['中等'] + ' / 困难 ' + s.byDifficulty['困难'] +
+          '）｜ ' + s.byCategory.length + ' 个分类 ｜ 其中 ' + s.withVisualizer +
+          ' 道可直接跳转动画演示';
+      } else {
+        el.textContent = '题库模块（需启动后端服务才能加载完整题单）';
+      }
+    });
+
+    // 先渲染兜底目录，后端返回后覆盖（避免白屏）
+    render(FALLBACK);
+  })();
+  </script>
+</body>
+</html>

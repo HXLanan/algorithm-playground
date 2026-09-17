@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>KMP 字符串匹配 · Algo Playground</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script>window.__ALGO_ACTIVE__ = 'kmp.html';</script>
+</head>
+<body>
+  <main class="wrap">
+    <h1>🔤 KMP 字符串匹配</h1>
+    <p class="sub">
+      朴素匹配在失配时要把主串指针"退回"重来，最坏是 O(n·m)。
+      KMP 用模式串自身的重复结构（<b>next 数组</b>），失配时<b>主串指针永不回头</b>，做到 O(n+m)。
+    </p>
+
+    <section class="card">
+      <div class="btnrow">
+        <span class="tag">主串</span>
+        <input id="textInput" type="text" value="ABABDABACDABABCABAB"
+               style="width:260px;background:#232a45;color:#e6e9f5;border:1px solid #2e3654;border-radius:8px;padding:7px 10px;font-family:monospace;">
+        <span class="tag">模式串</span>
+        <input id="patInput" type="text" value="ABABCABAB"
+               style="width:150px;background:#232a45;color:#e6e9f5;border:1px solid #2e3654;border-radius:8px;padding:7px 10px;font-family:monospace;">
+        <button id="btnRun">▶ 开始匹配</button>
+        <button id="btnPlay">▶ 播放过程</button>
+        <button id="btnStep" class="amber">⏭ 单步</button>
+        <span id="srcTag" class="tag">数据源：本地</span>
+      </div>
+      <div class="canvas-host" style="margin-top:14px;">
+        <canvas id="cv" width="900" height="330"></canvas>
+      </div>
+      <p class="info-line" id="stats"></p>
+      <p class="info-line" id="msg" style="color:#fbbf24;"></p>
+    </section>
+
+    <section class="card">
+      <h2>next 数组：模式串的"自我介绍"</h2>
+      <p>next[i] 表示"模式串前 i+1 个字符中，最长的<b>相等前后缀</b>长度"。
+         它记录了模式串哪里"自己和自己重复"。</p>
+      <p class="info-line" id="nextDisplay"></p>
+      <p style="margin-top:12px;">
+        有了它，失配时就不必让主串回头——因为<b>前缀和后缀相同</b>，
+        已经匹配的那一段可以直接复用，只需把模式串滑到对应位置继续比。
+      </p>
+      <p class="info-line">
+        这也是 KMP 的精髓：<b>用空间（预计算 next 数组）换时间（避免重复比较）</b>。
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>KMP vs 朴素匹配</h2>
+      <p id="compareBox" class="info-line"></p>
+    </section>
+  </main>
+
+  <script src="../assets/js/nav.js"></script>
+  <script src="../assets/js/related.js"></script>
+  <script src="../assets/js/algo-core-ext.js"></script>
+  <script src="../assets/js/ui.js"></script>
+  <script>
+  (function () {
+    "use strict";
+    var cv = document.getElementById('cv');
+    var ctx = cv.getContext('2d');
+    var textInput = document.getElementById('textInput');
+    var patInput = document.getElementById('patInput');
+    var btnRun = document.getElementById('btnRun');
+    var btnPlay = document.getElementById('btnPlay');
+    var btnStep = document.getElementById('btnStep');
+    var srcTag = document.getElementById('srcTag');
+    var statsEl = document.getElementById('stats');
+    var msg = document.getElementById('msg');
+    var nextDisplay = document.getElementById('nextDisplay');
+    var compareBox = document.getElementById('compareBox');
+
+    var result = null;
+    var cur = 0;              // 已播放到的 step 索引+1
+    var timer = null;
+
+    var CW = 30;              // 字符格宽度
+
+    /* ---------- 绘制 ---------- */
+    function draw() {
+      ctx.fillStyle = '#0b0e1a';
+      ctx.fillRect(0, 0, cv.width, cv.height);
+      if (!result) return;
+
+      var text = result.text, pattern = result.pattern;
+      var s = (cur > 0 && cur <= result.steps.length) ? result.steps[cur - 1] : null;
+      var ti = s ? s.i : -1, pj = s ? s.j : -1;
+
+      var startX = 40;
+      // 主串
+      ctx.fillStyle = '#9aa3c0';
+      ctx.font = '12px sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText('主串', 8, 88);
+      for (var i = 0; i < text.length; i++) {
+        var x = startX + i * CW;
+        var isCur = (i === ti);
+        ctx.fillStyle = isCur ? '#fbbf24' : '#1c2238';
+        ctx.fillRect(x, 100, CW - 3, 34);
+        ctx.fillStyle = isCur ? '#0b0e1a' : '#cfd8f0';
+        ctx.font = 'bold 16px monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(text[i], x + (CW - 3) / 2, 117);
+        // 下标
+        ctx.fillStyle = '#5d6a92';
+        ctx.font = '10px sans-serif';
+        ctx.fillText(String(i), x + (CW - 3) / 2, 146);
+      }
+
+      // 模式串（按失配位置偏移）
+      var offset = (s && s.type === 'fallback') ? 0 : (ti >= 0 ? ti - pj : 0);
+      ctx.fillStyle = '#9aa3c0';
+      ctx.font = '12px sans-serif';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'alphabetic';
+      ctx.fillText('模式串', 8, 238);
+      var matchedLen = s ? Math.min(s.j, pattern.length) : 0;
+      for (var k = 0; k < pattern.length; k++) {
+        var px = startX + (offset + k) * CW;
+        if (px < 0 || px > cv.width - CW) continue;
+        var isPatCur = (k === pj);
+        var isMatched = (k < pj);
+        ctx.fillStyle = isPatCur ? '#f472b6'
+                      : (isMatched ? 'rgba(52,211,153,0.75)' : '#2b3350');
+        ctx.fillRect(px, 250, CW - 3, 34);
+        ctx.fillStyle = isPatCur ? '#0b0e1a' : '#e6e9f5';
+        ctx.font = 'bold 16px monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(pattern[k], px + (CW - 3) / 2, 267);
+      }
+      ctx.textBaseline = 'alphabetic';
+
+      // 已匹配连线
+      if (pj > 0 && ti >= 0) {
+        ctx.strokeStyle = 'rgba(52,211,153,0.55)';
+        ctx.lineWidth = 2;
+        for (var m = 0; m < pj; m++) {
+          var mx = startX + (ti - pj + m) * CW + (CW - 3) / 2;
+          if (mx < 0 || mx > cv.width) continue;
+          ctx.beginPath();
+          ctx.moveTo(mx, 136);
+          ctx.lineTo(mx, 248);
+          ctx.stroke();
+        }
+      }
+
+      // 图例
+      ctx.font = '12px sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#fbbf24';
+      ctx.fillText('■ 主串当前位', 40, 40);
+      ctx.fillStyle = '#f472b6';
+      ctx.fillText('■ 模式串当前位', 150, 40);
+      ctx.fillStyle = '#34d399';
+      ctx.fillText('■ 已匹配部分', 270, 40);
+
+      // 匹配位置提示
+      if (result.matches.length) {
+        ctx.fillStyle = '#34d399';
+        ctx.font = 'bold 14px sans-serif';
+        ctx.textAlign = 'right';
+        ctx.fillText('找到匹配位置：' + result.matches.join(', '), cv.width - 20, 40);
+      }
+    }
+
+    /* ---------- 状态 ---------- */
+    function updateUI() {
+      if (!result) return;
+      var total = result.steps.length;
+      var s = (cur > 0 && cur <= total) ? result.steps[cur - 1] : null;
+      msg.textContent = s ? s.msg : (cur === 0 ? '准备开始匹配…' : '匹配结束。');
+      statsEl.textContent = '步骤 ' + cur + ' / ' + total +
+        ' ｜ 匹配位置 ' + (result.matches.length ? result.matches.join(', ') : '无') +
+        ' ｜ KMP 比较 ' + result.comparisons + ' 次' +
+        ' ｜ 朴素需 ' + result.naiveComparisons + ' 次' +
+        (result.speedup ? '（快 ' + result.speedup + '×）' : '');
+    }
+    function render() { draw(); updateUI(); }
+
+    /* ---------- 运行 ---------- */
+    function run() {
+      stopPlay();
+      var text = textInput.value || 'ABABDABACDABABCABAB';
+      var pattern = patInput.value || 'ABABCABAB';
+      UI.api('/api/kmp/search', { method: 'POST', body: { text: text, pattern: pattern } })
+        .then(function (res) {
+          if (res && res.steps) {
+            srcTag.textContent = '数据源：后端 API';
+            result = res;
+          } else {
+            srcTag.textContent = '数据源：本地兜底';
+            result = AlgoExt.kmpSearch(text, pattern);
+            result.naiveComparisons = naiveCount(text, pattern);
+            result.speedup = result.comparisons > 0
+              ? +(result.naiveComparisons / result.comparisons).toFixed(2) : 0;
+          }
+          cur = 0;
+          showNext();
+          render();
+          compareBox.textContent = 'KMP 共比较 ' + result.comparisons + ' 次；朴素匹配需要 ' +
+            result.naiveComparisons + ' 次。' +
+            (result.speedup > 1 ? '本例中 KMP 快 ' + result.speedup + ' 倍。' : '') +
+            ' 文本越长、重复模式越多，KMP 的优势越明显。';
+        });
+    }
+    function naiveCount(text, pattern) {
+      var n = text.length, m = pattern.length, cnt = 0;
+      for (var s = 0; s <= n - m; s++) {
+        var k = 0;
+        while (k < m) { cnt++; if (text[s + k] !== pattern[k]) break; k++; }
+        if (k === m) break;
+      }
+      return cnt;
+    }
+    function showNext() {
+      if (!result) return;
+      var nxt = result.next || [];
+      var parts = [];
+      for (var i = 0; i < result.pattern.length; i++) {
+        parts.push(result.pattern[i] + ':' + (nxt[i] !== undefined ? nxt[i] : 0));
+      }
+      nextDisplay.textContent = '模式串 "' + result.pattern + '" 的 next 数组 → ' + parts.join('  ');
+    }
+
+    function stopPlay() {
+      if (timer) { clearInterval(timer); timer = null; }
+      btnPlay.textContent = '▶ 播放过程';
+    }
+    function play() {
+      if (!result) { run(); return; }
+      if (timer) { stopPlay(); return; }
+      if (cur >= result.steps.length) { cur = 0; render(); }
+      btnPlay.textContent = '⏸ 暂停';
+      timer = setInterval(function () {
+        if (cur >= result.steps.length) { stopPlay(); return; }
+        cur++; render();
+      }, 420);
+    }
+
+    btnRun.addEventListener('click', run);
+    btnPlay.addEventListener('click', play);
+    btnStep.addEventListener('click', function () {
+      stopPlay();
+      if (result && cur < result.steps.length) { cur++; render(); }
+    });
+    textInput.addEventListener('change', run);
+    patInput.addEventListener('change', run);
+
+    run();
+  })();
+  </script>
+</body>
+</html>

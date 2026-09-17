@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>埃拉托斯特尼筛法 · Algo Playground</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script>window.__ALGO_ACTIVE__ = 'prime-sieve.html';</script>
+</head>
+<body>
+  <main class="wrap">
+    <h1>🔢 埃拉托斯特尼筛法</h1>
+    <p class="sub">
+      要找 n 以内的所有素数？<b>不要一个个试除</b>。
+      换个思路：从最小的素数 2 开始，把它所有的倍数全部<b>划掉</b>；
+      再找下一个没被划掉的数，重复。剩下的就是素数。
+    </p>
+
+    <section class="card">
+      <div class="btnrow">
+        <span class="tag">范围 2 ~</span>
+        <select id="nSel">
+          <option value="50">50</option>
+          <option value="100" selected>100</option>
+          <option value="200">200</option>
+          <option value="500">500</option>
+          <option value="1000">1000</option>
+        </select>
+        <button id="btnPlay">▶ 播放筛法过程</button>
+        <button id="btnStep" class="amber">⏭ 下一轮</button>
+        <button id="btnReset" class="secondary">♻️ 重置</button>
+        <span id="srcTag" class="tag">数据源：本地</span>
+      </div>
+      <div class="canvas-host" style="margin-top:14px;">
+        <canvas id="cv" width="920" height="520"></canvas>
+      </div>
+      <p class="info-line" id="msg" style="color:#fbbf24;font-weight:600;"></p>
+      <p class="info-line" id="stats"></p>
+      <p class="info-line" id="primeList" style="word-break:break-all;"></p>
+    </section>
+
+    <section class="card-grid">
+      <div class="card">
+        <h2>为什么从 i² 开始划？</h2>
+        <p>当我们拿到素数 i，要划掉它的倍数：2i, 3i, 4i, …</p>
+        <p>但 <b>2i、3i、… (i-1)i 早就被更小的素数划掉了</b>——
+           比如 3×7=21 在筛 3 的时候就被划掉了。所以只需从 <b>i²</b> 开始。</p>
+        <p id="optInfo" class="info-line"></p>
+      </div>
+      <div class="card">
+        <h2>复杂度 O(n log log n)</h2>
+        <p>这个复杂度几乎等于线性！它比"逐个试除"的 O(n√n) 快几个数量级。</p>
+        <p id="densityInfo" class="info-line"></p>
+        <p class="info-line">素数越来越稀疏（素数定理：π(n) ≈ n/ln n），
+           但<b>永远不会停止</b>——欧几里得在两千多年前就证明了素数有无穷多个。</p>
+      </div>
+    </section>
+  </main>
+
+  <script src="../assets/js/nav.js"></script>
+  <script src="../assets/js/related.js"></script>
+  <script src="../assets/js/algo-core-ext.js"></script>
+  <script src="../assets/js/ui.js"></script>
+  <script>
+  (function () {
+    "use strict";
+    var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+    var nSel = document.getElementById('nSel');
+    var btnPlay = document.getElementById('btnPlay'), btnStep = document.getElementById('btnStep');
+    var btnReset = document.getElementById('btnReset');
+    var msg = document.getElementById('msg'), statsEl = document.getElementById('stats');
+    var primeList = document.getElementById('primeList'), srcTag = document.getElementById('srcTag');
+    var optInfo = document.getElementById('optInfo'), densityInfo = document.getElementById('densityInfo');
+
+    var W = 920, H = 520;
+    var N = 100;
+    var state = [];        // 0 未处理 1 素数 2 已划掉 3 当前筛数
+    var steps = [], curStep = 0;
+    var timer = null;
+    var primes = [];
+
+    function initState(n) {
+      N = n;
+      state = [];
+      for (var i = 0; i <= N; i++) state.push(0);
+      if (N >= 0) state[0] = 2;
+      if (N >= 1) state[1] = 2;
+      curStep = 0;
+    }
+
+    /* ---------- 绘制 ---------- */
+    function draw() {
+      ctx.clearRect(0, 0, W, H);
+      var cols = Math.ceil(Math.sqrt(N * 1.6));
+      var rows = Math.ceil(N / cols);
+      var cellW = (W - 80) / cols;
+      var cellH = Math.min(cellW, (H - 100) / rows);
+      cellW = Math.min(cellW, cellH);
+      var gridW = cellW * cols, gridH = cellH * rows;
+      var ox = (W - gridW) / 2, oy = 56;
+
+      ctx.font = (cellW > 30 ? 'bold 13px' : 'bold 10px') + ' monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+
+      for (var v = 1; v <= N; v++) {
+        var idx = v - 1;
+        var r = Math.floor(idx / cols), c = idx % cols;
+        var x = ox + c * cellW, y = oy + r * cellH;
+        var st = state[v];
+
+        var bg, fg, border;
+        if (st === 1) { bg = '#34d399'; fg = '#0b0e1a'; border = '#34d399'; }
+        else if (st === 3) { bg = '#fbbf24'; fg = '#0b0e1a'; border = '#fbbf24'; }
+        else if (st === 2) { bg = '#1a1f33'; fg = '#3f4763'; border = '#232a45'; }
+        else { bg = '#2b3350'; fg = '#e6e9f5'; border = '#4a5578'; }
+
+        ctx.fillStyle = bg;
+        ctx.fillRect(x + 1.5, y + 1.5, cellW - 3, cellH - 3);
+        ctx.strokeStyle = border;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x + 1.5, y + 1.5, cellW - 3, cellH - 3);
+
+        ctx.fillStyle = fg;
+        ctx.fillText(String(v), x + cellW / 2, y + cellH / 2);
+
+        // 划掉的数画斜线
+        if (st === 2) {
+          ctx.strokeStyle = 'rgba(251,113,133,0.5)';
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.moveTo(x + 4, y + cellH - 4);
+          ctx.lineTo(x + cellW - 4, y + 4);
+          ctx.stroke();
+        }
+      }
+
+      // 标题
+      ctx.fillStyle = '#9aa3c0';
+      ctx.font = '14px sans-serif';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'alphabetic';
+      ctx.fillText('范围 2 ~ ' + N + '　｜　' + (steps.length ? ('已完成 ' + curStep + ' / ' + steps.length + ' 轮筛选') : '未开始'), 24, 30);
+    }
+
+    /* ---------- 筛法步骤 ---------- */
+    function buildSteps() {
+      initState(N);
+      steps = [];
+      var limit = Math.floor(Math.sqrt(N));
+      for (var i = 2; i <= N; i++) {
+        if (state[i] !== 2) {
+          state[i] = 1;      // 标记为素数
+          if (i <= limit) {
+            var removed = [];
+            for (var j = i * i; j <= N; j += i) {
+              if (state[j] !== 2) { state[j] = 2; removed.push(j); }
+            }
+            steps.push({ prime: i, removed: removed });
+          } else {
+            steps.push({ prime: i, removed: [] });
+          }
+        }
+      }
+      // 重新初始化，供播放
+      initState(N);
+      primes = [];
+      for (var k = 2; k <= N; k++) if (state[k] !== 2) primes.push(k);
+    }
+
+    function applyStep(si) {
+      var s = steps[si];
+      if (!s) return;
+      // 先把当前筛数变色
+      for (var v = 2; v <= N; v++) {
+        if (state[v] === 1) state[v] = 1;
+        if (state[v] === 3) state[v] = 1;
+      }
+      state[s.prime] = 3;
+      for (var r = 0; r < s.removed.length; r++) state[s.removed[r]] = 2;
+      draw();
+      msg.textContent = '第 ' + (si + 1) + ' 轮：以 ' + s.prime + ' 为筛，从 ' +
+                        (s.prime * s.prime) + '² 开始划掉 ' + s.removed.length + ' 个倍数' +
+                        (s.removed.length ? '（' + s.removed.slice(0, 8).join(', ') +
+                         (s.removed.length > 8 ? '…' : '') + '）' : '（已无需再划）');
+      updateStats();
+    }
+    function finalize() {
+      for (var v = 2; v <= N; v++) if (state[v] !== 2) state[v] = 1;
+      draw();
+      primes = [];
+      for (var k = 2; k <= N; k++) if (state[k] === 1) primes.push(k);
+      msg.textContent = '✅ 筛选完成！' + N + ' 以内共有 ' + primes.length + ' 个素数。';
+      updateStats();
+    }
+
+    function updateStats() {
+      var alive = 0, crossed = 0;
+      for (var v = 2; v <= N; v++) { if (state[v] === 2) crossed++; else alive++; }
+      statsEl.textContent = '未被划掉 ' + alive + ' 个 ｜ 已划掉 ' + crossed + ' 个';
+      if (primes.length) {
+        primeList.textContent = '素数列表：' + primes.join(', ');
+      }
+    }
+
+    function stopPlay() { if (timer) { clearInterval(timer); timer = null; } btnPlay.textContent = '▶ 播放筛法过程'; }
+    function play() {
+      if (timer) { stopPlay(); return; }
+      if (curStep >= steps.length) { reset(); }
+      btnPlay.textContent = '⏸ 暂停';
+      timer = setInterval(function () {
+        if (curStep >= steps.length) { stopPlay(); finalize(); return; }
+        applyStep(curStep); curStep++;
+      }, 700);
+    }
+    function reset() {
+      stopPlay();
+      initState(N); curStep = 0; primes = [];
+      draw();
+      msg.textContent = '已重置。点 ▶ 播放，看 2、3、5、7… 如何逐个划掉自己的倍数。';
+      statsEl.textContent = '';
+      primeList.textContent = '';
+    }
+
+    btnPlay.addEventListener('click', play);
+    btnStep.addEventListener('click', function () {
+      stopPlay();
+      if (curStep >= steps.length) { finalize(); return; }
+      applyStep(curStep); curStep++;
+      if (curStep >= steps.length) finalize();
+    });
+    btnReset.addEventListener('click', reset);
+    nSel.addEventListener('change', function () {
+      N = parseInt(nSel.value, 10);
+      buildSteps(); reset();
+      updateInfo();
+    });
+
+    function updateInfo() {
+      optInfo.textContent = '筛 ' + N + ' 以内的数时，只需用不超过 √' + N + ' = ' +
+                            Math.sqrt(N).toFixed(1) + ' 的素数去筛，' +
+                            '其余的数早就被划掉了。这一步优化是筛法高效的关键。';
+    }
+
+    /* ---------- 启动 ---------- */
+    N = parseInt(nSel.value, 10);
+    buildSteps();
+    reset();
+    updateInfo();
+
+    UI.api('/api/prime-sieve/density?n=1000').then(function (res) {
+      if (res && res.total) {
+        densityInfo.textContent = '实测：1000 以内有 ' + res.total + ' 个素数，密度约 ' +
+                                  (res.density * 100).toFixed(1) + '%；到 100 万时密度只剩约 7%。';
+      } else {
+        var r = AlgoExt.primeSieve(1000);
+        densityInfo.textContent = '实测：1000 以内有 ' + r.primeCount + ' 个素数，密度约 ' +
+                                  (r.primeCount / 1000 * 100).toFixed(1) + '%。';
+      }
+    });
+  })();
+  </script>
+</body>
+</html>

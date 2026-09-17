@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>二分查找 · Algo Playground</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script>window.__ALGO_ACTIVE__ = 'binary-search.html';</script>
+</head>
+<body>
+  <main class="wrap">
+    <h1>🎯 二分查找</h1>
+    <p class="sub">
+      在<b>有序数组</b>中查找目标：每次拿中间元素比较，一次性排除一半候选。
+      输入一个目标值，看它如何"砍半"逼近答案。
+    </p>
+
+    <section class="card">
+      <div class="btnrow">
+        <span class="tag">数组大小</span>
+        <select id="sizeSel">
+          <option value="8">8 个</option>
+          <option value="16" selected>16 个</option>
+          <option value="32">32 个</option>
+          <option value="64">64 个</option>
+        </select>
+        <span class="tag">查找目标</span>
+        <input id="targetInput" type="number" value="0" style="width:100px;background:#232a45;color:#e6e9f5;border:1px solid #2e3654;border-radius:8px;padding:7px 10px;">
+        <button id="btnRun">🔍 开始查找</button>
+        <button id="btnStep" class="amber">⏭ 单步</button>
+        <button id="btnRand" class="secondary">🎲 随机目标</button>
+        <span id="srcTag" class="tag">数据源：本地</span>
+      </div>
+      <div class="info-line">提示：留空或填 0 表示随机选一个在数组里的值。</div>
+      <div class="canvas-host" style="margin-top:14px;">
+        <canvas id="cv" width="900" height="280"></canvas>
+      </div>
+      <p class="info-line" id="msg" style="color:#fbbf24;font-weight:600;"></p>
+      <p class="info-line" id="stats"></p>
+    </section>
+
+    <section class="card-grid">
+      <div class="card">
+        <h2>为什么这么快？</h2>
+        <p>每次比较后，<b>一半的候选被永久排除</b>。所以比较次数 ≈ log₂n：</p>
+        <p id="complexityTable" class="info-line"></p>
+        <p class="info-line">100 万个元素只需 <b>20 次</b>比较；
+           10 亿个也只要 <b>30 次</b>。这是线性查找永远做不到的。</p>
+      </div>
+      <div class="card">
+        <h2>三个容易写错的地方</h2>
+        <p>① <code>while (lo &lt;= hi)</code> 还是 <code>&lt;</code>？差一个等号就是死循环或漏查。</p>
+        <p>② 中点用 <code>lo + (hi-lo)/2</code> 而不是 <code>(lo+hi)/2</code>——后者可能整数溢出。</p>
+        <p>③ 更新时该写 <code>lo = mid+1</code> 还是 <code>lo = mid</code>？写错就永远出不来。</p>
+        <p class="info-line">二分查找的思想简单，但"边界"极其容易出错——这也是面试高频考点。</p>
+      </div>
+    </section>
+  </main>
+
+  <script src="../assets/js/nav.js"></script>
+  <script src="../assets/js/related.js"></script>
+  <script src="../assets/js/algo-core-ext.js"></script>
+  <script src="../assets/js/ui.js"></script>
+  <script>
+  (function () {
+    "use strict";
+    var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+    var sizeSel = document.getElementById('sizeSel');
+    var targetInput = document.getElementById('targetInput');
+    var btnRun = document.getElementById('btnRun'), btnStep = document.getElementById('btnStep');
+    var btnRand = document.getElementById('btnRand');
+    var msg = document.getElementById('msg'), statsEl = document.getElementById('stats');
+    var srcTag = document.getElementById('srcTag');
+    var complexityTable = document.getElementById('complexityTable');
+
+    var W = 900, H = 280;
+    var result = null, cur = 0, timer = null;
+    var array = [];
+
+    function makeArray(n) {
+      var s = {}, out = [];
+      while (out.length < n) {
+        var v = 1 + Math.floor(Math.random() * n * 3);
+        if (!s[v]) { s[v] = 1; out.push(v); }
+      }
+      out.sort(function (a, b) { return a - b; });
+      return out;
+    }
+
+    /* ---------- 绘制 ---------- */
+    function draw() {
+      ctx.clearRect(0, 0, W, H);
+      if (!array.length) return;
+      var n = array.length;
+      var cw = Math.min(70, (W - 80) / n);
+      var startX = (W - cw * n) / 2;
+      var y = 110, ch = 56;
+
+      var s = (result && cur > 0) ? result.steps[cur - 1] : null;
+      var lo = s ? s.lo : -1, hi = s ? s.hi : -1, mid = s ? s.mid : -1;
+
+      ctx.font = '13px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+
+      for (var i = 0; i < n; i++) {
+        var x = startX + i * cw;
+        var col = '#2b3350', txt = '#cfd8f0', border = '#39405e';
+        var inRange = (lo >= 0 && i >= lo && i <= hi);
+
+        if (i === mid) { col = '#fbbf24'; txt = '#0b0e1a'; border = '#fbbf24'; }
+        else if (inRange) { col = 'rgba(94,234,212,0.22)'; border = '#5eead4'; }
+        else if (lo >= 0) { col = '#171b2b'; txt = '#4a5578'; border = '#232a45'; }
+
+        ctx.fillStyle = col;
+        ctx.fillRect(x + 2, y, cw - 4, ch);
+        ctx.strokeStyle = border;
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(x + 2, y, cw - 4, ch);
+
+        ctx.fillStyle = txt;
+        ctx.font = (cw > 40 ? 'bold 15px' : 'bold 11px') + ' sans-serif';
+        ctx.fillText(String(array[i]), x + cw / 2, y + ch / 2);
+
+        ctx.fillStyle = '#5d6a92';
+        ctx.font = '10px sans-serif';
+        ctx.fillText(String(i), x + cw / 2, y + ch + 14);
+      }
+
+      // 指针标签
+      ctx.font = 'bold 12px sans-serif';
+      if (lo >= 0) {
+        ctx.fillStyle = '#5eead4'; ctx.fillText('lo', startX + lo * cw + cw / 2, y - 14);
+        ctx.fillStyle = '#5eead4'; ctx.fillText('hi', startX + hi * cw + cw / 2, y + ch + 32);
+      }
+      if (mid >= 0) {
+        ctx.fillStyle = '#fbbf24'; ctx.fillText('mid', startX + mid * cw + cw / 2, y - 34);
+      }
+
+      // 标题
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#9aa3c0';
+      ctx.font = '14px sans-serif';
+      ctx.fillText('目标 = ' + (result ? result.target : '?') +
+                   '　｜　当前搜索区间 [' + (lo >= 0 ? lo : '-') + ', ' + (hi >= 0 ? hi : '-') + ']',
+                   24, 32);
+    }
+
+    function updateUI() {
+      if (!result) return;
+      var total = result.steps.length;
+      var s = (cur > 0 && cur <= total) ? result.steps[cur - 1] : null;
+      msg.textContent = s ? s.msg : '准备开始查找…';
+      statsEl.textContent = '步骤 ' + cur + ' / ' + total +
+        ' ｜ 已比较 ' + (s ? s.comparisons : 0) + ' 次' +
+        ' ｜ 线性查找最坏需 ' + array.length + ' 次' +
+        ' ｜ 二分理论上限 ' + result.maxPossible + ' 次';
+    }
+    function render() { draw(); updateUI(); }
+
+    /* ---------- 运行 ---------- */
+    function run() {
+      stopPlay();
+      var n = parseInt(sizeSel.value, 10);
+      if (array.length !== n) array = makeArray(n);
+      var t = parseInt(targetInput.value, 10);
+      if (!t || isNaN(t)) { t = array[Math.floor(Math.random() * array.length)]; targetInput.value = t; }
+
+      UI.api('/api/binary-search/search', { method: 'POST', body: { nums: array, target: t } })
+        .then(function (res) {
+          if (res && res.steps) { srcTag.textContent = '数据源：后端 API'; result = res; }
+          else { srcTag.textContent = '数据源：本地兜底'; result = AlgoExt.binarySearch(array, t); }
+          cur = 0; render();
+        });
+    }
+    function stopPlay() { if (timer) { clearInterval(timer); timer = null; } }
+    function stepOnce() {
+      stopPlay();
+      if (!result) { run(); return; }
+      if (cur < result.steps.length) { cur++; render(); }
+    }
+
+    btnRun.addEventListener('click', run);
+    btnStep.addEventListener('click', stepOnce);
+    btnRand.addEventListener('click', function () {
+      array = makeArray(parseInt(sizeSel.value, 10));
+      targetInput.value = array[Math.floor(Math.random() * array.length)];
+      run();
+    });
+    sizeSel.addEventListener('change', function () { array = []; run(); });
+    targetInput.addEventListener('change', run);
+
+    /* ---------- 启动 ---------- */
+    array = makeArray(parseInt(sizeSel.value, 10));
+    targetInput.value = array[Math.floor(Math.random() * array.length)];
+    run();
+
+    // 复杂度表
+    var rows = ['<b>n</b>', '<b>比较次数</b>'], sizes = [10, 1000, 1000000, 1000000000];
+    var line = [];
+    for (var i = 0; i < sizes.length; i++) {
+      var lg = Math.ceil(Math.log2(sizes[i]));
+      line.push(sizes[i].toLocaleString() + ' 个 → ' + lg + ' 次');
+    }
+    complexityTable.textContent = line.join('　｜　');
+  })();
+  </script>
+</body>
+</html>

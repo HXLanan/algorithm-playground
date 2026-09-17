@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>最长公共子序列 · Algo Playground</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script>window.__ALGO_ACTIVE__ = 'lcs.html';</script>
+</head>
+<body>
+  <main class="wrap">
+    <h1>🧬 最长公共子序列（LCS）</h1>
+    <p class="sub">
+      给定两个字符串，求它们最长的公共子序列（<b>不要求连续</b>）。
+      这是<b>二维动态规划</b>的典范，也是 <code>git diff</code> 和 DNA 序列比对的底层算法。
+    </p>
+
+    <section class="card">
+      <div class="btnrow">
+        <span class="tag">字符串 A</span>
+        <input id="aInput" type="text" value="ABCBDAB"
+               style="width:160px;background:#232a45;color:#e6e9f5;border:1px solid #2e3654;border-radius:8px;padding:7px 10px;font-family:monospace;">
+        <span class="tag">字符串 B</span>
+        <input id="bInput" type="text" value="BDCABA"
+               style="width:160px;background:#232a45;color:#e6e9f5;border:1px solid #2e3654;border-radius:8px;padding:7px 10px;font-family:monospace;">
+        <button id="btnSolve">🔍 求解</button>
+        <button id="btnRandom" class="secondary">🎲 随机字符串</button>
+        <span id="srcTag" class="tag">数据源：本地</span>
+      </div>
+
+      <div class="card" style="margin-top:16px;background:#0b0e1a;">
+        <h2>DP 表格</h2>
+        <div style="overflow-x:auto;margin-top:10px;">
+          <div id="tableHost"></div>
+        </div>
+      </div>
+
+      <p class="info-line" id="resultView" style="font-size:17px;font-weight:700;color:#fbbf24;"></p>
+    </section>
+
+    <section class="card-grid">
+      <div class="card">
+        <h2>状态转移</h2>
+        <p><code>dp[i][j]</code> = A 的前 i 个字符与 B 的前 j 个字符的 LCS 长度。</p>
+        <p style="font-family:monospace;background:#0b0e1a;padding:10px;border-radius:8px;font-size:13px;color:#5eead4;">
+          若 A[i-1] == B[j-1]：<br>
+          &nbsp;&nbsp;dp[i][j] = dp[i-1][j-1] + 1&nbsp;&nbsp;← 斜着 +1<br>
+          否则：<br>
+          &nbsp;&nbsp;dp[i][j] = max(dp[i-1][j], dp[i][j-1])
+        </p>
+        <p class="info-line">字符相同时，两个指针一起前进（斜着走）；
+           不同时，扔掉其中一个字符继续比（取上方或左方的较大值）。</p>
+      </div>
+      <div class="card">
+        <h2>它在哪被用到？</h2>
+        <p>🔹 <b>git diff</b>：比较两个版本的文件差异，本质是求 LCS 后标出增删行</p>
+        <p>🔹 <b>DNA 序列比对</b>：生物信息学中判断两条基因序列的相似度</p>
+        <p>🔹 <b>拼写纠错 / 模糊搜索</b>：编辑距离（Levenshtein）就是 LCS 的变体</p>
+        <p>🔹 <b>版本控制、代码合并</b>：三方合并算法的基础</p>
+        <p class="info-line">注意区分：<b>子序列</b>不要求连续，<b>子串</b>要求连续——
+           后者要用不同的 DP 定义。</p>
+      </div>
+    </section>
+  </main>
+
+  <script src="../assets/js/nav.js"></script>
+  <script src="../assets/js/related.js"></script>
+  <script src="../assets/js/algo-core-ext.js"></script>
+  <script src="../assets/js/ui.js"></script>
+  <script>
+  (function () {
+    "use strict";
+    var aInput = document.getElementById('aInput'), bInput = document.getElementById('bInput');
+    var btnSolve = document.getElementById('btnSolve'), btnRandom = document.getElementById('btnRandom');
+    var tableHost = document.getElementById('tableHost');
+    var resultView = document.getElementById('resultView');
+    var srcTag = document.getElementById('srcTag');
+
+    function renderTable(dp, a, b, seq) {
+      var n = a.length, m = b.length;
+      // 回溯标记：找出属于 LCS 的格子路径
+      var pathSet = {};
+      var i = n, j = m;
+      while (i > 0 && j > 0) {
+        pathSet[i + '-' + j] = true;
+        if (a[i-1] === b[j-1]) { i--; j--; }
+        else if (dp[i-1][j] >= dp[i][j-1]) i--;
+        else j--;
+      }
+
+      var html = '<table style="border-collapse:collapse;font-family:monospace;font-size:13px;">';
+      html += '<tr><th style="padding:6px 9px;border:1px solid #2e3654;background:#161b2e;"></th>' +
+              '<th style="padding:6px 9px;border:1px solid #2e3654;background:#161b2e;color:#5eead4;">∅</th>';
+      for (var jj = 0; jj < m; jj++) {
+        html += '<th style="padding:6px 9px;border:1px solid #2e3654;background:#161b2e;color:#5eead4;">' + b[jj] + '</th>';
+      }
+      html += '</tr>';
+
+      for (var ii = 0; ii <= n; ii++) {
+        html += '<tr>';
+        var rowLabel = ii === 0 ? '∅' : a[ii-1];
+        html += '<th style="padding:6px 9px;border:1px solid #2e3654;background:#161b2e;color:#fbbf24;">' + rowLabel + '</th>';
+        for (var j2 = 0; j2 <= m; j2++) {
+          var v = dp[ii][j2];
+          var onPath = pathSet[ii + '-' + j2];
+          var bg = onPath ? 'rgba(52,211,153,0.35)' : '#1c2238';
+          var fg = onPath ? '#eafff5' : '#cfd8f0';
+          html += '<td style="padding:6px 9px;text-align:center;border:1px solid #2e3654;background:' + bg +
+                  ';color:' + fg + ';' + (onPath ? 'font-weight:700;' : '') + '">' + v + '</td>';
+        }
+        html += '</tr>';
+      }
+      html += '</table>';
+      tableHost.innerHTML = html;
+      resultView.textContent = '🎯 LCS 长度 = ' + dp[n][m] + '　｜　一个最长公共子序列 = "' +
+                               (seq || '') + '"';
+    }
+
+    function solve() {
+      var a = (aInput.value || 'ABCBDAB').slice(0, 60);
+      var b = (bInput.value || 'BDCABA').slice(0, 60);
+
+      UI.api('/api/lcs/solve', { method: 'POST', body: { a: a, b: b } })
+        .then(function (res) {
+          if (res && res.table) { srcTag.textContent = '数据源：后端 API'; }
+          else { srcTag.textContent = '数据源：本地兜底'; res = AlgoExt.lcsSolve(a, b); }
+          renderTable(res.table, a, b, res.subsequence);
+        });
+    }
+
+    btnSolve.addEventListener('click', solve);
+    btnRandom.addEventListener('click', function () {
+      var chars = 'ABCDEFG', mk = function (len) {
+        var s = '';
+        for (var i = 0; i < len; i++) s += chars[Math.floor(Math.random() * chars.length)];
+        return s;
+      };
+      aInput.value = mk(6 + Math.floor(Math.random() * 4));
+      bInput.value = mk(5 + Math.floor(Math.random() * 4));
+      solve();
+    });
+    aInput.addEventListener('change', solve);
+    bInput.addEventListener('change', solve);
+
+    solve();
+  })();
+  </script>
+</body>
+</html>

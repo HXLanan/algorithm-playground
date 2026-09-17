@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>二叉搜索树 · Algo Playground</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script>window.__ALGO_ACTIVE__ = 'bst.html';</script>
+</head>
+<body>
+  <main class="wrap">
+    <h1>🌳 二叉搜索树（BST）</h1>
+    <p class="sub">
+      每个节点的左子树都比它小、右子树都比它大。这个性质让查找只要 O(log n)——
+      但前提是树<b>足够平衡</b>。往下看：插入顺序居然能决定整棵树的形状。
+    </p>
+
+    <section class="card">
+      <div class="btnrow">
+        <span class="tag">插入序列</span>
+        <input id="valsInput" type="text" value="50,30,70,20,40,60,80"
+               style="width:260px;background:#232a45;color:#e6e9f5;border:1px solid #2e3654;border-radius:8px;padding:7px 10px;font-family:monospace;">
+        <button id="btnBuild">🌱 构建树</button>
+        <button id="btnSorted" class="secondary">📈 有序插入（看退化）</button>
+        <button id="btnRandom" class="secondary">🎲 随机插入</button>
+        <span class="tag">查找</span>
+        <input id="targetInput" type="number" value="40" style="width:80px;background:#232a45;color:#e6e9f5;border:1px solid #2e3654;border-radius:8px;padding:7px 10px;">
+        <button id="btnSearch" class="amber">🔍 查找</button>
+        <span id="srcTag" class="tag">数据源：本地</span>
+      </div>
+      <div class="canvas-host" style="margin-top:14px;">
+        <canvas id="cv" width="900" height="420"></canvas>
+      </div>
+      <p class="info-line" id="msg" style="color:#fbbf24;font-weight:600;"></p>
+      <p class="info-line" id="stats"></p>
+    </section>
+
+    <section class="card-grid">
+      <div class="card">
+        <h2>BST 的三条铁律</h2>
+        <p>对任意节点：<br>
+           ① 左子树所有值 <b>&lt;</b> 它<br>
+           ② 右子树所有值 <b>&gt;</b> 它<br>
+           ③ 左右子树本身也是 BST</p>
+        <p class="info-line">推论：<b>中序遍历</b>（左→根→右）必然得到升序序列。
+           这是"验证一棵树是否为 BST"的标准方法。</p>
+      </div>
+      <div class="card">
+        <h2>⚠️ 退化陷阱</h2>
+        <p>点"有序插入"试试：插入 1,2,3,4,5… 时，每个新节点都往右挂，
+           树变成了一条<b>链表</b>，查找退化成 <b>O(n)</b>。</p>
+        <p id="balanceInfo" class="info-line"></p>
+        <p class="info-line">这正是 <b>AVL 树 / 红黑树</b>诞生的原因：
+           它们通过"旋转"操作在插入时自动保持平衡，把高度锁在 O(log n)。
+           Java 的 TreeMap、C++ 的 std::map 用的就是红黑树。</p>
+      </div>
+    </section>
+  </main>
+
+  <script src="../assets/js/nav.js"></script>
+  <script src="../assets/js/related.js"></script>
+  <script src="../assets/js/algo-core-ext.js"></script>
+  <script src="../assets/js/ui.js"></script>
+  <script>
+  (function () {
+    "use strict";
+    var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+    var valsInput = document.getElementById('valsInput');
+    var targetInput = document.getElementById('targetInput');
+    var btnBuild = document.getElementById('btnBuild'), btnSorted = document.getElementById('btnSorted');
+    var btnRandom = document.getElementById('btnRandom'), btnSearch = document.getElementById('btnSearch');
+    var msg = document.getElementById('msg'), statsEl = document.getElementById('stats');
+    var balanceInfo = document.getElementById('balanceInfo'), srcTag = document.getElementById('srcTag');
+
+    var W = 900, H = 420;
+    var root = null, inorder = [], treeHeight = 0;
+    var searchPath = [], searchResult = null;
+
+    /* ---------- 布局（中序位置决定 x） ---------- */
+    function layout(node) {
+      var positions = {}, counter = { i: 0 };
+      function walk(nd, depth) {
+        if (!nd) return;
+        walk(nd.left, depth + 1);
+        positions[nd.val] = { x: counter.i++, depth: depth, node: nd };
+        walk(nd.right, depth + 1);
+      }
+      walk(node, 0);
+      return positions;
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, W, H);
+      if (!root) return;
+      var pos = layout(root);
+      var total = Object.keys(pos).length;
+      if (!total) return;
+
+      var levelH = Math.min(88, (H - 90) / Math.max(1, treeHeight));
+      var slotW = (W - 100) / Math.max(1, total);
+      var offsetX = 50 + slotW / 2;
+
+      function xy(v) {
+        var p = pos[v];
+        return [offsetX + p.x * slotW, 56 + p.depth * levelH];
+      }
+
+      // 画边
+      Object.keys(pos).forEach(function (v) {
+        var nd = pos[v].node;
+        var p = xy(+v);
+        [nd.left, nd.right].forEach(function (child) {
+          if (!child) return;
+          var c = xy(child.val);
+          var onPath = searchPath.indexOf(+v) >= 0 && searchPath.indexOf(child.val) >= 0;
+          ctx.strokeStyle = onPath ? 'rgba(251,191,36,0.9)' : 'rgba(90,105,150,0.5)';
+          ctx.lineWidth = onPath ? 3 : 1.8;
+          ctx.beginPath();
+          ctx.moveTo(p[0], p[1]);
+          ctx.lineTo(c[0], c[1]);
+          ctx.stroke();
+        });
+      });
+
+      // 画节点
+      Object.keys(pos).forEach(function (v) {
+        var val = +v;
+        var p = xy(val);
+        var isSearch = searchPath.indexOf(val) >= 0;
+        var isHit = searchResult && searchResult === val;
+        var r = isHit ? 25 : 22;
+
+        ctx.beginPath();
+        ctx.arc(p[0], p[1], r, 0, Math.PI * 2);
+        ctx.fillStyle = isHit ? '#34d399' : (isSearch ? '#fbbf24' : '#2b3350');
+        ctx.fill();
+        ctx.strokeStyle = isHit ? '#34d399' : (isSearch ? '#fbbf24' : '#4a5578');
+        ctx.lineWidth = 2.5;
+        ctx.stroke();
+
+        ctx.fillStyle = (isHit || isSearch) ? '#0b0e1a' : '#e6e9f5';
+        ctx.font = 'bold 15px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(String(val), p[0], p[1]);
+      });
+
+      // 标题
+      ctx.fillStyle = '#9aa3c0';
+      ctx.font = '14px sans-serif';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'alphabetic';
+      ctx.fillText('节点数 ' + total + ' ｜ 树高 ' + treeHeight +
+                   ' ｜ 理想高度 ≈ ' + (total > 0 ? Math.ceil(Math.log2(total + 1)) : 0), 18, 26);
+    }
+
+    /* ---------- 构建 ---------- */
+    function parseVals() {
+      return valsInput.value.split(/[,，\s]+/).map(function (s) {
+        return parseInt(s, 10);
+      }).filter(function (v) { return !isNaN(v); }).slice(0, 30);
+    }
+
+    function build(vals, cb) {
+      UI.api('/api/bst/build', { method: 'POST', body: { values: vals } }).then(function (res) {
+        if (res && res.root !== undefined) { srcTag.textContent = '数据源：后端 API'; }
+        else {
+          srcTag.textContent = '数据源：本地兜底';
+          var r = AlgoExt.bstBuild(vals);
+          res = { root: r.root, inorder: r.inorder, height: r.height, count: r.count };
+        }
+        root = res.root;
+        inorder = res.inorder || [];
+        treeHeight = res.height || 0;
+        searchPath = []; searchResult = null;
+        draw();
+        statsEl.textContent = '中序遍历（必然升序）：' + inorder.join(', ') +
+                               '　｜ 节点数 ' + (res.count || inorder.length) + '　｜ 树高 ' + treeHeight;
+        if (cb) cb();
+      });
+    }
+
+    function doSearch() {
+      var t = parseInt(targetInput.value, 10);
+      if (isNaN(t)) return;
+      UI.api('/api/bst/search', { method: 'POST', body: { values: parseVals(), target: t } })
+        .then(function (res) {
+          if (!res || !res.path) {
+            var r = { path: [], found: false };
+            var cur = root;
+            while (cur) { r.path.push(cur.val); if (cur.val === t) { r.found = true; break; }
+                          cur = t < cur.val ? cur.left : cur.right; }
+            res = r;
+          }
+          searchPath = res.path || [];
+          searchResult = res.found ? t : null;
+          draw();
+          msg.textContent = res.found
+            ? '✅ 找到 ' + t + '！比较路径：' + searchPath.join(' → ') + '（共 ' + searchPath.length + ' 次比较）'
+            : '❌ ' + t + ' 不在树中。比较路径：' + searchPath.join(' → ') + '，走到空节点即结束';
+        });
+    }
+
+    btnBuild.addEventListener('click', function () { build(parseVals()); });
+    btnSearch.addEventListener('click', doSearch);
+    btnSorted.addEventListener('click', function () {
+      valsInput.value = '10,20,30,40,50,60,70,80';
+      build(parseVals(), function () {
+        msg.textContent = '⚠️ 有序插入导致树退化成一条链！高度 = ' + treeHeight +
+                          '，查找退化为 O(n)。这就是需要平衡树的原因。';
+      });
+    });
+    btnRandom.addEventListener('click', function () {
+      var pool = [10, 20, 30, 40, 50, 60, 70, 80].sort(function () { return Math.random() - 0.5; });
+      valsInput.value = pool.join(',');
+      build(parseVals(), function () {
+        msg.textContent = '✅ 同样的 8 个数，随机顺序插入后高度只有 ' + treeHeight +
+                          ' —— 接近理想的 log₂(8)≈3 层。';
+      });
+    });
+
+    /* ---------- 启动 ---------- */
+    build(parseVals());
+
+    UI.api('/api/bst/balanced', { method: 'POST', body: {} }).then(function (res) {
+      var a, b;
+      if (res && res.sortedInsert) { a = res.sortedInsert.height; b = res.randomInsert.height; }
+      else {
+        var s = AlgoExt.bstBuild([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]);
+        var r = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15].sort(function () { return Math.random() - 0.5; });
+        var rr = AlgoExt.bstBuild(r);
+        a = s.height; b = rr.height;
+      }
+      balanceInfo.textContent = '实测（15 个节点）：有序插入高度 = ' + a +
+                                '，随机插入高度 = ' + b + '。差距 ' + (a - b) + ' 层！';
+    });
+  })();
+  </script>
+</body>
+</html>

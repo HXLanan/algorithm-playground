@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>蒙特卡罗求 π · Algo Playground</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script>window.__ALGO_ACTIVE__ = 'montecarlo.html';</script>
+</head>
+<body>
+  <main class="wrap">
+    <h1>🎲 蒙特卡罗方法求 π</h1>
+    <p class="sub">
+      在正方形里随机撒点，落在内切圆里的比例 ≈ 圆面积/正方形面积 = π/4。
+      所以 <b>π ≈ 4 × 命中比例</b>。点"撒点"看它一次次逼近真实值。
+    </p>
+
+    <section class="card">
+      <div class="btnrow">
+        <button id="btnRun">▶ 撒点估算</button>
+        <button id="btnAuto" class="amber">◆ 连续撒（自动累积）</button>
+        <button id="btnClear" class="secondary">🧹 清空</button>
+        <span class="tag">每次撒</span>
+        <select id="countSel">
+          <option value="500">500 点</option>
+          <option value="3000" selected>3000 点</option>
+          <option value="20000">20000 点</option>
+          <option value="100000">100000 点</option>
+        </select>
+        <span id="srcTag" class="tag">数据源：本地</span>
+      </div>
+      <div class="canvas-host" style="margin-top:14px;">
+        <canvas id="cv" width="560" height="560"></canvas>
+      </div>
+    </section>
+
+    <section class="card-grid">
+      <div class="card">
+        <h2>估算结果</h2>
+        <p style="font-size:22px;font-weight:800;color:#fbbf24;" id="piValue">π ≈ —</p>
+        <p>真实值：3.14159265…</p>
+        <p>误差：<b id="errValue">—</b></p>
+        <p class="info-line" id="detail"></p>
+      </div>
+      <div class="card">
+        <h2>为什么撒得越多越准？</h2>
+        <p>这是<b>大数定律</b>：样本越多，频率越接近概率。</p>
+        <p>但注意一个残酷的事实——误差只按 <b>1/√N</b> 下降：</p>
+        <p class="info-line">想把误差<b>减半</b>，点数得翻 <b>4 倍</b>。撒 100 万点也只精确到小数点后 3 位左右。
+           所以蒙特卡罗适合高维、难解析的问题，而不是用来算 π。</p>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>收敛过程</h2>
+      <div class="canvas-host" style="padding:14px;">
+        <canvas id="cv2" width="900" height="240"></canvas>
+      </div>
+    </section>
+  </main>
+
+  <script src="../assets/js/nav.js"></script>
+  <script src="../assets/js/related.js"></script>
+  <script src="../assets/js/algo-core-ext.js"></script>
+  <script src="../assets/js/ui.js"></script>
+  <script>
+  (function () {
+    "use strict";
+    var cv = document.getElementById('cv');
+    var ctx = cv.getContext('2d');
+    var cv2 = document.getElementById('cv2');
+    var ctx2 = cv2.getContext('2d');
+    var btnRun = document.getElementById('btnRun');
+    var btnAuto = document.getElementById('btnAuto');
+    var btnClear = document.getElementById('btnClear');
+    var countSel = document.getElementById('countSel');
+    var srcTag = document.getElementById('srcTag');
+    var piValue = document.getElementById('piValue');
+    var errValue = document.getElementById('errValue');
+    var detail = document.getElementById('detail');
+
+    var TRUE_PI = Math.PI;
+    var totalPts = 0, insidePts = 0;
+    var shown = [];          // 用于绘制的点（限制数量）
+    var MAX_SHOWN = 6000;
+    var timer = null;
+
+    var SIZE = 520, OX = 20, OY = 20;
+
+    /* ---------- 绘制主图 ---------- */
+    function drawMain() {
+      ctx.fillStyle = '#0b0e1a';
+      ctx.fillRect(0, 0, cv.width, cv.height);
+
+      // 正方形
+      ctx.strokeStyle = '#39405e';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(OX, OY, SIZE, SIZE);
+
+      // 内切圆
+      ctx.beginPath();
+      ctx.arc(OX + SIZE / 2, OY + SIZE / 2, SIZE / 2, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(94,234,212,0.55)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      // 点
+      for (var i = 0; i < shown.length; i++) {
+        var p = shown[i];
+        var x = OX + p[0] * SIZE, y = OY + p[1] * SIZE;
+        ctx.fillStyle = p[2] ? '#fbbf24' : '#5d73c0';
+        ctx.fillRect(x, y, 2, 2);
+      }
+    }
+
+    /* ---------- 绘制收敛曲线 ---------- */
+    function drawCurve(curve) {
+      ctx2.clearRect(0, 0, cv2.width, cv2.height);
+      ctx2.fillStyle = '#0b0e1a';
+      ctx2.fillRect(0, 0, cv2.width, cv2.height);
+      if (!curve || !curve.length) return;
+
+      var W = cv2.width, H = cv2.height;
+      var padL = 60, padR = 24, padT = 24, padB = 34;
+      var iw = W - padL - padR, ih = H - padT - padB;
+
+      // 参考线 π
+      var yPi = padT + ih * (1 - (TRUE_PI - 3.0) / 0.3);
+      ctx2.strokeStyle = 'rgba(94,234,212,0.6)';
+      ctx2.setLineDash([6, 4]);
+      ctx2.beginPath();
+      ctx2.moveTo(padL, yPi);
+      ctx2.lineTo(W - padR, yPi);
+      ctx2.stroke();
+      ctx2.setLineDash([]);
+      ctx2.fillStyle = '#5eead4';
+      ctx2.font = '12px sans-serif';
+      ctx2.textAlign = 'left';
+      ctx2.fillText('真值 π = 3.14159', padL + 4, yPi - 6);
+
+      // 曲线
+      ctx2.strokeStyle = '#fbbf24';
+      ctx2.lineWidth = 2;
+      ctx2.beginPath();
+      for (var i = 0; i < curve.length; i++) {
+        var x = padL + iw * i / (curve.length - 1 || 1);
+        var v = Math.min(3.3, Math.max(3.0, curve[i].pi));
+        var y = padT + ih * (1 - (v - 3.0) / 0.3);
+        if (i === 0) ctx2.moveTo(x, y); else ctx2.lineTo(x, y);
+      }
+      ctx2.stroke();
+
+      // 点 + 标签
+      ctx2.fillStyle = '#fbbf24';
+      for (var j = 0; j < curve.length; j++) {
+        var x2 = padL + iw * j / (curve.length - 1 || 1);
+        var v2 = Math.min(3.3, Math.max(3.0, curve[j].pi));
+        var y2 = padT + ih * (1 - (v2 - 3.0) / 0.3);
+        ctx2.beginPath();
+        ctx2.arc(x2, y2, 3, 0, Math.PI * 2);
+        ctx2.fill();
+        if (j % 2 === 0) {
+          ctx2.fillStyle = '#9aa3c0';
+          ctx2.font = '10px sans-serif';
+          ctx2.textAlign = 'center';
+          ctx2.fillText(curve[j].n >= 1000 ? (curve[j].n / 1000) + 'k' : String(curve[j].n), x2, H - 12);
+          ctx2.fillStyle = '#fbbf24';
+        }
+      }
+      ctx2.fillStyle = '#9aa3c0';
+      ctx2.font = '13px sans-serif';
+      ctx2.textAlign = 'left';
+      ctx2.fillText('横轴 = 撒点数量，纵轴 = π 的估计值', padL, 16);
+    }
+
+    /* ---------- 统计 ---------- */
+    function updateStats() {
+      if (totalPts === 0) {
+        piValue.textContent = 'π ≈ —';
+        errValue.textContent = '—';
+        detail.textContent = '还没撒点。';
+        return;
+      }
+      var est = 4 * insidePts / totalPts;
+      var err = Math.abs(est - TRUE_PI);
+      piValue.textContent = 'π ≈ ' + est.toFixed(6);
+      errValue.textContent = err.toFixed(6) + '（相对误差 ' + (err / TRUE_PI * 100).toFixed(3) + '%）';
+      detail.textContent = '共撒 ' + totalPts.toLocaleString() + ' 点，其中 ' +
+        insidePts.toLocaleString() + ' 点落在圆内（命中率 ' +
+        (insidePts / totalPts * 100).toFixed(2) + '%）';
+    }
+
+    /* ---------- 撒点（后端优先） ---------- */
+    function runRound(useBackend) {
+      var n = parseInt(countSel.value, 10);
+      if (useBackend) {
+        UI.api('/api/montecarlo/estimate?total=' + n).then(function (res) {
+          if (res && res.points) {
+            srcTag.textContent = '数据源：后端 API';
+            applyResult(res.points, res.inside, res.total);
+          } else {
+            srcTag.textContent = '数据源：本地兜底';
+            localRound(n);
+          }
+        });
+      } else {
+        localRound(n);
+      }
+    }
+    function localRound(n) {
+      var r = AlgoExt.monteCarlo(n, n);
+      applyResult(r.points, r.inside, r.total);
+    }
+    function applyResult(points, inside, total) {
+      insidePts += inside;
+      totalPts += total;
+      for (var i = 0; i < points.length; i++) {
+        if (shown.length >= MAX_SHOWN) break;
+        shown.push(points[i]);
+      }
+      // 若超限，做抽样稀释以保持画面分布
+      if (shown.length >= MAX_SHOWN) {
+        var thin = [];
+        for (var k = 0; k < shown.length; k += 2) thin.push(shown[k]);
+        shown = thin;
+      }
+      drawMain();
+      updateStats();
+    }
+
+    function stopAuto() {
+      if (timer) { clearInterval(timer); timer = null; }
+      btnAuto.textContent = '◆ 连续撒（自动累积）';
+    }
+    function toggleAuto() {
+      if (timer) { stopAuto(); return; }
+      btnAuto.textContent = '⏹ 停止';
+      timer = setInterval(function () { runRound(false); }, 420);
+    }
+
+    btnRun.addEventListener('click', function () { stopAuto(); runRound(true); });
+    btnAuto.addEventListener('click', toggleAuto);
+    btnClear.addEventListener('click', function () {
+      stopAuto(); totalPts = 0; insidePts = 0; shown = [];
+      drawMain(); updateStats();
+    });
+
+    /* ---------- 启动 ---------- */
+    drawMain();
+    updateStats();
+    setTimeout(function () { runRound(true); }, 120);
+
+    UI.api('/api/montecarlo/convergence?seed=7').then(function (res) {
+      if (res && res.curve) { drawCurve(res.curve); }
+      else {
+        // 本地生成收敛曲线
+        var marks = [10, 50, 100, 500, 1000, 5000, 10000, 50000];
+        var curve = [], inside = 0, mi = 0;
+        for (var i = 1; i <= 50000; i++) {
+          var x = Math.random(), y = Math.random();
+          if ((x - 0.5) * (x - 0.5) + (y - 0.5) * (y - 0.5) <= 0.25) inside++;
+          if (mi < marks.length && i === marks[mi]) {
+            var est = 4 * inside / i;
+            curve.push({ n: i, pi: est, error: Math.abs(est - TRUE_PI) });
+            mi++;
+          }
+        }
+        drawCurve(curve);
+      }
+    });
+  })();
+  </script>
+</body>
+</html>

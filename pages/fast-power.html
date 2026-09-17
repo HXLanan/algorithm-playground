@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>快速幂 · Algo Playground</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script>window.__ALGO_ACTIVE__ = 'fast-power.html';</script>
+</head>
+<body>
+  <main class="wrap">
+    <h1>🚀 快速幂</h1>
+    <p class="sub">
+      计算 xⁿ 时，朴素做法要乘 n 次。快速幂把指数写成二进制，
+      每次"指数减半、底数平方"，只需 <b>O(log n)</b> 次乘法。
+      RSA 加密、矩阵快速幂都建立在它之上。
+    </p>
+
+    <section class="card">
+      <div class="btnrow">
+        <span class="tag">底数 x</span>
+        <input id="baseInput" type="number" value="2" style="width:90px;background:#232a45;color:#e6e9f5;border:1px solid #2e3654;border-radius:8px;padding:7px 10px;">
+        <span class="tag">指数 n</span>
+        <input id="expInput" type="number" value="100" style="width:110px;background:#232a45;color:#e6e9f5;border:1px solid #2e3654;border-radius:8px;padding:7px 10px;">
+        <span class="tag">取模（可选）</span>
+        <input id="modInput" type="number" value="0" style="width:110px;background:#232a45;color:#e6e9f5;border:1px solid #2e3654;border-radius:8px;padding:7px 10px;">
+        <button id="btnRun">⚡ 计算</button>
+        <span id="srcTag" class="tag">数据源：本地</span>
+      </div>
+      <div class="info-line">提示：取模填 0 表示不取模（大数会完整显示）；填 1000000007 是竞赛常用模数。</div>
+
+      <div class="card" style="margin-top:16px;background:#0b0e1a;">
+        <h2>二进制分解过程</h2>
+        <div id="bitView" style="font-family:monospace;font-size:15px;line-height:2;"></div>
+      </div>
+
+      <div class="card" style="margin-top:12px;">
+        <h2>结果</h2>
+        <p id="resultView" style="font-size:18px;font-weight:700;color:#fbbf24;word-break:break-all;"></p>
+        <p class="info-line" id="opView"></p>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>逐步过程</h2>
+      <div style="max-height:280px;overflow-y:auto;background:#0b0e1a;border-radius:10px;padding:12px;">
+        <div id="stepView" style="font-family:monospace;font-size:13px;line-height:1.9;"></div>
+      </div>
+    </section>
+
+    <section class="card-grid">
+      <div class="card">
+        <h2>乘法次数对比</h2>
+        <div id="cmpTable" class="info-line"></div>
+      </div>
+      <div class="card">
+        <h2>为什么是 O(log n)？</h2>
+        <p>指数 n 的二进制有 <b>⌊log₂n⌋+1</b> 位。快速幂每处理一位只做常数次乘法
+           （一位平方 + 可能乘一次结果），所以总共约 <b>2 log₂n</b> 次乘法。</p>
+        <p class="info-line">n = 10 亿时：朴素要 10 亿次乘法，快速幂只要 <b>约 60 次</b>。
+           这个差距让"看似不可能"的大数运算变得可行。</p>
+      </div>
+    </section>
+  </main>
+
+  <script src="../assets/js/nav.js"></script>
+  <script src="../assets/js/related.js"></script>
+  <script src="../assets/js/algo-core-ext.js"></script>
+  <script src="../assets/js/ui.js"></script>
+  <script>
+  (function () {
+    "use strict";
+    var baseInput = document.getElementById('baseInput');
+    var expInput = document.getElementById('expInput');
+    var modInput = document.getElementById('modInput');
+    var btnRun = document.getElementById('btnRun');
+    var srcTag = document.getElementById('srcTag');
+    var bitView = document.getElementById('bitView');
+    var resultView = document.getElementById('resultView');
+    var opView = document.getElementById('opView');
+    var stepView = document.getElementById('stepView');
+    var cmpTable = document.getElementById('cmpTable');
+
+    function shortNum(v) {
+      var s = String(v);
+      if (s.length <= 24) return s;
+      return s.slice(0, 12) + '…' + s.slice(-8) + '（共 ' + s.length + ' 位）';
+    }
+
+    function run() {
+      var base = parseInt(baseInput.value, 10) || 2;
+      var exp = parseInt(expInput.value, 10);
+      if (isNaN(exp) || exp < 0) { exp = 100; expInput.value = 100; }
+      var mod = parseInt(modInput.value, 10) || 0;
+
+      UI.api('/api/fast-power/power', { method: 'POST', body: { base: base, exp: exp, mod: mod } })
+        .then(function (res) {
+          if (res && res.steps) { srcTag.textContent = '数据源：后端 API'; }
+          else { srcTag.textContent = '数据源：本地兜底'; res = AlgoExt.fastPower(base, exp, mod); }
+          render(res);
+        });
+    }
+
+    function render(res) {
+      // 二进制可视化
+      var bits = res.binaryExp || '0';
+      var html = '<div style="margin-bottom:10px;">指数 <b style="color:#5eead4">' + res.exp +
+                 '</b> 的二进制 = <b style="color:#fbbf24">' + bits + '</b>' +
+                 '（共 ' + bits.length + ' 位）</div>';
+      html += '<div style="display:flex;gap:6px;flex-wrap:wrap;">';
+      for (var i = 0; i < bits.length; i++) {
+        var b = bits[i];
+        var on = b === '1';
+        html += '<div style="width:34px;height:34px;display:flex;align-items:center;justify-content:center;' +
+                'border-radius:6px;font-weight:700;' +
+                (on ? 'background:#fbbf24;color:#0b0e1a;' : 'background:#2b3350;color:#8b96bd;') +
+                '">' + b + '</div>';
+      }
+      html += '</div>';
+      if (res.mod) {
+        html += '<div style="margin-top:12px;color:#9aa3c0;">因为每一步都对 ' + res.mod +
+                ' 取模，所以中间结果永远不会超过它——这就是"模幂"能处理天文数字的原因。</div>';
+      }
+      bitView.innerHTML = html;
+
+      // 结果
+      resultView.textContent = res.base + '^' + res.exp + (res.mod ? ' mod ' + res.mod : '') +
+                               ' = ' + shortNum(res.result);
+      opView.textContent = '朴素算法需要 ' + res.naiveOps + ' 次乘法；' +
+                           '快速幂只需约 ' + res.fastOps + ' 次 → 快了约 ' +
+                           (res.fastOps > 0 ? Math.round(res.naiveOps / res.fastOps) : 0) + ' 倍';
+
+      // 步骤
+      var lines = [];
+      for (var k = 0; k < res.steps.length; k++) {
+        var s = res.steps[k];
+        var color = s.bit === 1 ? '#fbbf24' : (s.bit === 0 ? '#5d6a92' : '#34d399');
+        lines.push('<div style="color:' + color + '">' +
+          '[第' + (s.bitIndex + 1) + '位] ' + s.msg +
+          (s.bit === 1 ? '　→ result = ' + shortNum(s.result) : '') + '</div>');
+      }
+      stepView.innerHTML = lines.join('');
+    }
+
+    btnRun.addEventListener('click', run);
+    baseInput.addEventListener('change', run);
+    expInput.addEventListener('change', run);
+    modInput.addEventListener('change', run);
+
+    UI.api('/api/fast-power/compare').then(function (res) {
+      var table = (res && res.table) ? res.table : null;
+      if (!table) {
+        table = [];
+        [8, 16, 32, 64, 128, 256, 1024, 1000000].forEach(function (n) {
+          table.push({ exp: n, naive: n, fast: n.toString(2).length });
+        });
+      }
+      var parts = [];
+      for (var i = 0; i < table.length; i++) {
+        parts.push('n=' + table[i].exp.toLocaleString() + '：' +
+                   table[i].naive.toLocaleString() + ' 次 → ' + table[i].fast + ' 次');
+      }
+      cmpTable.innerHTML = parts.join('<br>');
+    });
+
+    run();
+  })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>汉诺塔 · Algo Playground</title>
+  <link rel="stylesheet" href="../assets/style.css">
+  <script>window.__ALGO_ACTIVE__ = 'hanoi.html';</script>
+</head>
+<body>
+  <main class="wrap">
+    <h1>🗼 汉诺塔</h1>
+    <p class="sub">
+      三根柱子 A / B / C，n 个从小到大叠放的圆盘。每次只能移动一个盘，且大盘不能压在小盘上。
+      目标：把 A 上所有圆盘搬到 C。<b>拖动进度条</b>或点播放在时间轴上回看整个过程。
+    </p>
+
+    <section class="card">
+      <div class="btnrow">
+        <span class="tag">圆盘数</span>
+        <select id="diskSel">
+          <option value="3">3 个（7 步）</option>
+          <option value="4" selected>4 个（15 步）</option>
+          <option value="5">5 个（31 步）</option>
+          <option value="6">6 个（63 步）</option>
+          <option value="8">8 个（255 步）</option>
+        </select>
+        <button id="btnPlay">▶ 播放</button>
+        <button id="btnStep" class="amber">⏭ 单步</button>
+        <button id="btnReset" class="secondary">♻️ 回到起点</button>
+        <span id="srcTag" class="tag">数据源：本地</span>
+      </div>
+      <div class="info-line">
+        进度：<input type="range" id="progress" min="0" max="15" value="0" style="width:380px; vertical-align:middle;">
+        <span id="stepLabel" style="color:#fbbf24;font-weight:700;">第 0 / 15 步</span>
+      </div>
+      <div class="canvas-host" style="margin-top:14px;">
+        <canvas id="cv" width="900" height="360"></canvas>
+      </div>
+      <p class="info-line" id="moveLabel"></p>
+      <p class="info-line" id="stats"></p>
+    </section>
+
+    <section class="card-grid">
+      <div class="card">
+        <h2>为什么又是"指数爆炸"？</h2>
+        <p>最少移动次数 = <b>2ⁿ − 1</b>。看似温和，实则恐怖：</p>
+        <p id="countTable" class="info-line"></p>
+      </div>
+      <div class="card">
+        <h2>递归思想：把大问题拆成小问题</h2>
+        <p>要把 n 个盘从 A 搬到 C：</p>
+        <p>① 先把上面 <b>n−1</b> 个从 A 搬到 B（借助 C）<br>
+           ② 把最大的第 n 个从 A 搬到 C<br>
+           ③ 再把 B 上的 <b>n−1</b> 个搬到 C（借助 A）</p>
+        <p class="info-line">三步里有两步是"同样的子问题"——这就是递归。它和麦粒棋盘一样，最终都撞上 2ⁿ 这堵墙：n=64 需要 1.8×10¹⁹ 步，即使每秒移一次也要 5800 亿年。</p>
+      </div>
+    </section>
+  </main>
+
+  <script src="../assets/js/nav.js"></script>
+  <script src="../assets/js/related.js"></script>
+  <script src="../assets/js/algo-core-ext.js"></script>
+  <script src="../assets/js/ui.js"></script>
+  <script>
+  (function () {
+    "use strict";
+    var cv = document.getElementById('cv');
+    var ctx = cv.getContext('2d');
+    var diskSel = document.getElementById('diskSel');
+    var btnPlay = document.getElementById('btnPlay');
+    var btnStep = document.getElementById('btnStep');
+    var btnReset = document.getElementById('btnReset');
+    var progress = document.getElementById('progress');
+    var stepLabel = document.getElementById('stepLabel');
+    var moveLabel = document.getElementById('moveLabel');
+    var statsEl = document.getElementById('stats');
+    var countTable = document.getElementById('countTable');
+    var srcTag = document.getElementById('srcTag');
+
+    var snapshots = [];       // [{pegs:{A:[],B:[],C:[]}, move, index}]
+    var cur = 0;
+    var timer = null;
+    var n = 4;
+
+    var COLORS = ['#5eead4', '#fbbf24', '#f472b6', '#60a5fa', '#a78bfa',
+                  '#34d399', '#fb7185', '#facc15', '#38bdf8', '#e879f9',
+                  '#4ade80', '#f97316'];
+
+    /* ---------- 绘制 ---------- */
+    function draw() {
+      ctx.clearRect(0, 0, cv.width, cv.height);
+      var W = cv.width, H = cv.height;
+      var baseY = H - 50;
+      var pegXs = { A: W * 0.22, B: W * 0.5, C: W * 0.78 };
+      var maxDiskW = W * 0.24;
+      var diskH = Math.min(24, (baseY - 70) / Math.max(1, n));
+
+      // 底座
+      ctx.fillStyle = '#232a45';
+      ctx.fillRect(W * 0.07, baseY, W * 0.86, 10);
+
+      // 柱子
+      var keys = ['A', 'B', 'C'];
+      for (var i = 0; i < keys.length; i++) {
+        var k = keys[i];
+        ctx.fillStyle = '#39405e';
+        ctx.fillRect(pegXs[k] - 5, baseY - (baseY - 60), 10, baseY - 60);
+        // 标签
+        ctx.fillStyle = '#9aa3c0';
+        ctx.font = 'bold 18px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(k, pegXs[k], baseY + 38);
+      }
+
+      if (!snapshots.length) return;
+      var snap = snapshots[cur];
+      var pegs = snap.pegs;
+      var moving = snap.move;
+
+      for (var pi = 0; pi < keys.length; pi++) {
+        var pk = keys[pi];
+        var stack = pegs[pk];
+        for (var si = 0; si < stack.length; si++) {
+          var disk = stack[si];                 // 磁盘编号（1 = 最小）
+          var w = maxDiskW * (0.25 + 0.75 * disk / n);
+          var y = baseY - diskH * (si + 1);
+          var isMoving = moving && moving.disk === disk && moving.to === pk &&
+                         si === stack.length - 1 && cur > 0;
+          ctx.fillStyle = COLORS[(disk - 1) % COLORS.length];
+          if (isMoving) {
+            ctx.shadowColor = '#fff';
+            ctx.shadowBlur = 16;
+          }
+          roundRect(pegXs[pk] - w / 2, y, w, diskH - 2, 5);
+          ctx.fill();
+          ctx.shadowBlur = 0;
+        }
+      }
+
+      // 顶部提示：刚刚那一步
+      if (cur > 0 && snap.move) {
+        ctx.fillStyle = '#fbbf24';
+        ctx.font = 'bold 16px sans-serif';
+        ctx.textAlign = 'left';
+        ctx.fillText('第 ' + cur + ' 步：把 ' + snap.move.disk + ' 号盘从 ' +
+                     snap.move.from + ' 移到 ' + snap.move.to, 20, 30);
+      }
+    }
+    function roundRect(x, y, w, h, r) {
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.lineTo(x + w - r, y);
+      ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+      ctx.lineTo(x + w, y + h - r);
+      ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+      ctx.lineTo(x + r, y + h);
+      ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+      ctx.lineTo(x, y + r);
+      ctx.quadraticCurveTo(x, y, x + r, y);
+      ctx.closePath();
+    }
+
+    /* ---------- 状态 ---------- */
+    function updateLabel() {
+      var total = snapshots.length - 1;
+      stepLabel.textContent = '第 ' + cur + ' / ' + total + ' 步';
+      progress.max = total;
+      progress.value = cur;
+      if (cur === 0) {
+        moveLabel.textContent = '起点：所有圆盘都在 A 柱上。';
+      } else if (cur === total) {
+        moveLabel.textContent = '🎉 全部搬运完成！共 ' + total + ' 步（理论最少 ' + (Math.pow(2, n) - 1) + ' 步）。';
+      } else {
+        var mv = snapshots[cur].move;
+        moveLabel.textContent = '第 ' + cur + ' 步：' + mv.disk + ' 号盘从 ' + mv.from + ' → ' + mv.to;
+      }
+      statsEl.textContent = '当前圆盘数 ' + n + ' ｜ 总步数 ' + total + ' ｜ 理论最少 ' + (Math.pow(2, n) - 1) + ' 步';
+    }
+    function render() { draw(); updateLabel(); }
+
+    /* ---------- 加载 ---------- */
+    function load(disks) {
+      stopPlay();
+      n = disks;
+      UI.api('/api/hanoi/simulate?disks=' + disks).then(function (res) {
+        if (res && res.snapshots) {
+          srcTag.textContent = '数据源：后端 API';
+          snapshots = res.snapshots;
+        } else {
+          srcTag.textContent = '数据源：本地兜底';
+          snapshots = AlgoExt.hanoiSimulate(disks).snapshots;
+        }
+        cur = 0;
+        render();
+      });
+    }
+
+    function stopPlay() {
+      if (timer) { clearInterval(timer); timer = null; }
+      btnPlay.textContent = '▶ 播放';
+    }
+    function play() {
+      if (timer) { stopPlay(); return; }
+      if (cur >= snapshots.length - 1) { cur = 0; render(); }
+      btnPlay.textContent = '⏸ 暂停';
+      var total = snapshots.length - 1;
+      var delay = total > 100 ? 40 : (total > 30 ? 160 : 420);
+      timer = setInterval(function () {
+        if (cur >= snapshots.length - 1) { stopPlay(); return; }
+        cur++; render();
+      }, delay);
+    }
+
+    btnPlay.addEventListener('click', play);
+    btnStep.addEventListener('click', function () {
+      stopPlay();
+      if (cur < snapshots.length - 1) { cur++; render(); }
+    });
+    btnReset.addEventListener('click', function () { stopPlay(); cur = 0; render(); });
+    progress.addEventListener('input', function () {
+      stopPlay(); cur = parseInt(progress.value, 10); render();
+    });
+    diskSel.addEventListener('change', function () { load(parseInt(diskSel.value, 10)); });
+
+    /* ---------- 初始 ---------- */
+    load(parseInt(diskSel.value, 10));
+
+    // 指数表
+    UI.api('/api/hanoi/counts').then(function (res) {
+      var table = res && res.table ? res.table : null;
+      if (!table) {
+        table = [];
+        var sizes = [3, 4, 5, 8, 10, 16, 20, 32, 64];
+        for (var i = 0; i < sizes.length; i++) {
+          var v = Math.pow(2, sizes[i]) - 1;
+          table.push({ n: sizes[i], moves: v, moves_str: v > 1e12 ? v.toExponential(2) : String(v) });
+        }
+      }
+      var parts = [];
+      for (var j = 0; j < table.length; j++) {
+        parts.push(table[j].n + '盘=' + table[j].moves_str + '步');
+      }
+      countTable.textContent = parts.join(' ｜ ');
+    });
+  })();
+  </script>
+</body>
+</html>
