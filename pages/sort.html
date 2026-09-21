@@ -85,7 +85,40 @@
     var running = false, timer = null, done = false, loading = false;
     var hl = { a: -1, b: -1, mark: -1 };
 
-    function draw(list) {
+    /* ---------- 平滑交换动画状态 ---------- */
+    // anim 描述「正在播放的一次交换/移动」：
+    //   { from: 起始下标, to: 目标下标, value: 值, t: 进度 0→1, arc: 是否走弧线 }
+    var anim = [];            // 可能同时有多个（归并/插入的移动）
+    var ANIM_MS = 320;        // 单次交换动画时长
+    var rafId = null;
+
+    function easeInOut(u) {
+      // 缓入缓出：起步慢、中间快、结尾慢，视觉更自然
+      return u < 0.5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2;
+    }
+
+    function slotWidth(len) { return W / Math.max(1, len); }
+
+    function anyAnimating() {
+      for (var i = 0; i < anim.length; i++) if (anim[i].t < 1) return true;
+      return false;
+    }
+
+    /** 推进动画进度；返回是否仍在动画中 */
+    function stepAnim(dtMs) {
+      var still = false;
+      for (var i = anim.length - 1; i >= 0; i--) {
+        anim[i].t += dtMs / ANIM_MS;
+        if (anim[i].t >= 1) {
+          anim.splice(i, 1);          // 动画结束，移除
+        } else {
+          still = true;
+        }
+      }
+      return still;
+    }
+
+    function draw(list, offsets) {
       ctx.clearRect(0, 0, W, H);
       var maxV = 1;
       for (var i = 0; i < list.length; i++) if (list[i] > maxV) maxV = list[i];
@@ -95,31 +128,80 @@
       ctx.strokeStyle = '#435079';
       ctx.beginPath(); ctx.moveTo(10, baseline + 0.5); ctx.lineTo(W - 10, baseline + 0.5); ctx.stroke();
 
-      for (var k = 0; k < list.length; k++) {
+      // 正在动画中的柱子最后画，保证浮在上层
+      var order = [];
+      for (var q = 0; q < list.length; q++) order.push(q);
+      order.sort(function (p, r) {
+        var ap = offsets && offsets[p] && offsets[p].lift ? 1 : 0;
+        var ar = offsets && offsets[r] && offsets[r].lift ? 1 : 0;
+        return ap - ar;
+      });
+
+      for (var oi = 0; oi < order.length; oi++) {
+        var k = order[oi];
         var h = span * (list[k] / maxV);
-        var x = k * slot + slot * 0.12;
+        var off = (offsets && offsets[k]) ? offsets[k] : { dx: 0, lift: 0 };
+        var x = k * slot + slot * 0.12 + off.dx;
         var bw = slot * 0.76;
-        var y = baseline - h;
+        var y = baseline - h - off.lift;
         var col;
         if (done) col = '#34d399';
         else if (k === hl.a || k === hl.b) col = '#fbbf24';
         else if (k === hl.mark) col = '#f472b6';
-        else col = '#5d73c0';
+        else col = (off.lift ? '#7c8be0' : '#5d73c0');
 
+        // 滑动中的柱子加阴影，突出「移动感」
+        if (off.lift > 0.5) {
+          ctx.shadowColor = 'rgba(94,234,212,0.55)';
+          ctx.shadowBlur = 14;
+        }
         ctx.fillStyle = col;
         ctx.fillRect(x, y, bw, h);
+        ctx.shadowBlur = 0;
 
-        var dark = (col === '#fbbf24' || col === '#f472b6' || col === '#34d399');
-        ctx.fillStyle = dark ? '#0b0e1a' : '#e4ecff';
+        // 数字画在柱子上方（深色背景上），所以直接用柱子颜色，
+        // 比黑色更清晰；亮色高亮时视觉上也更协调。
+        ctx.fillStyle = (col === '#5d73c0') ? '#c7d2f5' : col;
         ctx.font = (slot > 58 ? 'bold 15px' : 'bold 11px') + ' sans-serif';
         ctx.textAlign = 'center';
         ctx.fillText(String(list[k]), x + bw / 2, y - 8);
       }
     }
 
-    function render() {
+    /** 找出本帧相对上一帧发生了哪些「位置交换」，生成动画任务 */
+    function detectSwaps(prevList, curList) {
+      if (!prevList) return [];
+      var jobs = [];
+      var used = {};
+      // 记录上一帧每个值所在的位置（可能有重复值，用列表）
+      var prevPositions = {};
+      for (var p = 0; p < prevList.length; p++) {
+        var v = prevList[p];
+        if (prevPositions[v] === undefined) prevPositions[v] = [];
+        prevPositions[v].push(p);
+      }
+      for (var k = 0; k < curList.length; k++) {
+        if (prevList[k] === curList[k]) continue;      // 该位置没变
+        var val = curList[k];
+        var list = prevPositions[val] || [];
+        var from = -1;
+        // 找一个「上一帧位置 != k 且尚未被占用」的位置作为起点
+        for (var q = 0; q < list.length; q++) {
+          if (list[q] !== k && !used[list[q]]) { from = list[q]; break; }
+        }
+        // 只对近邻交换做滑动动画（距离太远的跳变用滑动反而看不清）
+        if (from >= 0 && Math.abs(from - k) <= 3) {
+          used[from] = true;
+          jobs.push({ from: from, to: k, value: val, t: 0, arc: true });
+        }
+      }
+      return jobs;
+    }
+
+    function render(animate) {
       if (stepIdx < 0) {
         hl = { a: -1, b: -1, mark: -1 };
+        anim = [];
         draw(originSeq);
         logEl.textContent = '已生成 ' + n + ' 根柱。点 ▶ 开始排序。';
         statsEl.textContent = '比较 0 次 ｜ 写入/交换 0 次';
@@ -127,9 +209,56 @@
       }
       var s = sim[stepIdx];
       hl = { a: s.a, b: s.b, mark: s.mark };
-      draw(s.list);
+      var prev = (stepIdx > 0) ? sim[stepIdx - 1].list : originSeq;
+
+      if (animate) {
+        anim = detectSwaps(prev, s.list) || [];
+      } else {
+        anim = [];       // 单步/重置时不播动画，直接显示结果
+      }
+      draw(s.list, buildOffsets());
       logEl.textContent = '步骤 ' + (stepIdx + 1) + '/' + sim.length + '：' + s.desc;
       statsEl.textContent = '比较 ' + s.c + ' 次 ｜ 写入/交换 ' + s.w + ' 次';
+    }
+
+    /** 把 anim 列表转成「下标 → 偏移量」映射，供 draw 使用
+     *
+     *  注意坐标方向：draw 是按「新数组」渲染的，柱子已经在新槽位上。
+     *  所以动画 t=0 时要把它「拉回」旧位置（偏移 = 全额位移），
+     *  t=1 时偏移归零（停在新位置）。因此用 (1 - e) 而不是 e。
+     */
+    function buildOffsets() {
+      var cur = sim[stepIdx] ? sim[stepIdx].list : originSeq;
+      var slot = W / Math.max(1, cur.length);
+      var map = {};
+      for (var i = 0; i < anim.length; i++) {
+        var a = anim[i];
+        var e = easeInOut(a.t);
+        map[a.to] = {
+          dx: (a.from - a.to) * (1 - e) * slot,
+          lift: a.arc ? Math.sin(e * Math.PI) * 26 : 0
+        };
+      }
+      return map;
+    }
+
+    /** 动画循环：驱动 anim 进度并重绘 */
+    function animationLoop() {
+      var last = performance.now();
+      function frame(now) {
+        var dt = now - last;
+        last = now;
+        var busy = anim.length > 0 && stepAnim(dt);
+        if (anim.length > 0) {
+          draw(sim[stepIdx] ? sim[stepIdx].list : originSeq, buildOffsets());
+        }
+        if (anim.length > 0 || busy) {
+          rafId = requestAnimationFrame(frame);
+        } else {
+          rafId = null;
+        }
+      }
+      if (rafId === null) rafId = requestAnimationFrame(frame);
     }
 
     function buildSim(cb) {
@@ -173,17 +302,21 @@
     function startTimer() {
       if (timer) clearInterval(timer);
       var delay = Math.max(20, 1300 - parseInt(speedEl.value, 10) * 12);
-      timer = setInterval(tick, delay);
+      // 播放节奏 = 动画时长 + 用户设定的停顿，保证动画能播完
+      var period = Math.max(ANIM_MS + 60, delay);
+      timer = setInterval(tick, period);
     }
     function tick() {
       if (done) { stopAuto(); return; }
       if (stepIdx + 1 >= sim.length) { finish(); return; }
       stepIdx++;
-      render();
+      render(true);          // 播放时带动画
+      animationLoop();
     }
     function finish() {
       done = true;
       hl = { a: -1, b: -1, mark: -1 };
+      anim = [];
       if (sim.length) {
         draw(sim[sim.length - 1].list);
         var last = sim[sim.length - 1];
@@ -206,7 +339,8 @@
       if (done) return;
       if (stepIdx + 1 >= sim.length) { finish(); return; }
       stepIdx++;
-      render();
+      render(true);          // 单步也展示平滑交换，便于观察
+      animationLoop();
     }
 
     btnPlay.addEventListener('click', togglePlay);

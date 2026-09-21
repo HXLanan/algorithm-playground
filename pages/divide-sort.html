@@ -95,7 +95,81 @@
     var running = false, timer = null, done = false, loading = false;
     var hl = { a: -1, b: -1, mark: -1, lo: -1, hi: -1 };
 
-    function draw(list) {
+    /* ---------- 平滑交换/移动动画 ---------- */
+    var anim = [];            // [{from, to, value, t, arc}]
+    var ANIM_MS = 320;
+    var rafId = null;
+
+    function easeInOut(u) {
+      return u < 0.5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2;
+    }
+
+    /** 找出前后两帧之间发生的交换/移动，生成动画任务 */
+    function detectSwaps(prevList, curList) {
+      if (!prevList) return [];
+      var jobs = [], used = {}, pos = {};
+      for (var p = 0; p < prevList.length; p++) {
+        var v = prevList[p];
+        if (pos[v] === undefined) pos[v] = [];
+        pos[v].push(p);
+      }
+      for (var k = 0; k < curList.length; k++) {
+        if (prevList[k] === curList[k]) continue;
+        var list = pos[curList[k]] || [], from = -1;
+        for (var q = 0; q < list.length; q++) {
+          if (list[q] !== k && !used[list[q]]) { from = list[q]; break; }
+        }
+        if (from >= 0 && Math.abs(from - k) <= 4) {
+          used[from] = true;
+          jobs.push({ from: from, to: k, value: curList[k], t: 0, arc: true });
+        }
+      }
+      return jobs;
+    }
+
+    /** 计算本帧各柱子的偏移量（draw 按新数组渲染，故用 1-e 拉回旧位置） */
+    function buildOffsets(list) {
+      var slot = W / Math.max(1, list.length);
+      var map = {};
+      for (var i = 0; i < anim.length; i++) {
+        var a = anim[i];
+        var e = easeInOut(a.t);
+        map[a.to] = {
+          dx: (a.from - a.to) * (1 - e) * slot,
+          lift: a.arc ? Math.sin(e * Math.PI) * 26 : 0
+        };
+      }
+      return map;
+    }
+
+    function stepAnim(dtMs) {
+      var still = false;
+      for (var i = anim.length - 1; i >= 0; i--) {
+        anim[i].t += dtMs / ANIM_MS;
+        if (anim[i].t >= 1) anim.splice(i, 1);
+        else still = true;
+      }
+      return still;
+    }
+
+    function animationLoop() {
+      var last = performance.now();
+      function frame(now) {
+        var dt = now - last;
+        last = now;
+        stepAnim(dt);
+        if (anim.length > 0) {
+          var list = sim[stepIdx] ? sim[stepIdx].list : originSeq;
+          draw(list, buildOffsets(list));
+          rafId = requestAnimationFrame(frame);
+        } else {
+          rafId = null;
+        }
+      }
+      if (rafId === null) rafId = requestAnimationFrame(frame);
+    }
+
+    function draw(list, offsets) {
       ctx.clearRect(0, 0, W, H);
       var maxV = 1, i;
       for (i = 0; i < list.length; i++) if (list[i] > maxV) maxV = list[i];
@@ -110,27 +184,50 @@
       ctx.strokeStyle = '#435079';
       ctx.beginPath(); ctx.moveTo(10, baseline + 0.5); ctx.lineTo(W - 10, baseline + 0.5); ctx.stroke();
 
-      for (i = 0; i < list.length; i++) {
+      // 移动中的柱子最后绘制，浮在上层
+      var order = [];
+      for (var q = 0; q < list.length; q++) order.push(q);
+      if (offsets) {
+        order.sort(function (p, r) {
+          var ap = (offsets[p] && offsets[p].lift) ? 1 : 0;
+          var ar = (offsets[r] && offsets[r].lift) ? 1 : 0;
+          return ap - ar;
+        });
+      }
+
+      for (var oi = 0; oi < order.length; oi++) {
+        i = order[oi];
+        var off = (offsets && offsets[i]) ? offsets[i] : { dx: 0, lift: 0 };
         var h = span * (list[i] / maxV);
-        var x = i * slot + slot * 0.12, bw = slot * 0.76, y = baseline - h;
+        var x = i * slot + slot * 0.12 + off.dx;
+        var bw = slot * 0.76;
+        var y = baseline - h - off.lift;
         var col;
         if (done) col = '#34d399';
         else if (i === hl.a || i === hl.b) col = '#fbbf24';
         else if (i === hl.mark) col = '#f472b6';
-        else col = '#5d73c0';
+        else col = off.lift > 0.5 ? '#7c8be0' : '#5d73c0';
+
+        if (off.lift > 0.5) {
+          ctx.shadowColor = 'rgba(94,234,212,0.55)';
+          ctx.shadowBlur = 14;
+        }
         ctx.fillStyle = col;
         ctx.fillRect(x, y, bw, h);
-        var dark = (col !== '#5d73c0');
-        ctx.fillStyle = dark ? '#0b0e1a' : '#e4ecff';
+        ctx.shadowBlur = 0;
+
+        // 数字在柱子上方（深色背景），用柱子颜色比黑色更清晰
+        ctx.fillStyle = (col === '#5d73c0' || col === '#7c8be0') ? '#c7d2f5' : col;
         ctx.font = (slot > 45 ? 'bold 13px' : 'bold 10px') + ' sans-serif';
         ctx.textAlign = 'center';
         ctx.fillText(String(list[i]), x + bw / 2, y - 7);
       }
     }
 
-    function render() {
+    function render(animate) {
       if (stepIdx < 0) {
         hl = { a: -1, b: -1, mark: -1, lo: -1, hi: -1 };
+        anim = [];
         draw(originSeq);
         logEl.textContent = '已生成 ' + n + ' 根柱。点 ▶ 播放。';
         statsEl.textContent = '比较 0 次 ｜ 写入 0 次';
@@ -138,7 +235,9 @@
       }
       var s = sim[stepIdx];
       hl = { a: s.a, b: s.b, mark: s.mark, lo: s.lo, hi: s.hi };
-      draw(s.list);
+      var prev = (stepIdx > 0) ? sim[stepIdx - 1].list : originSeq;
+      anim = animate ? (detectSwaps(prev, s.list) || []) : [];
+      draw(s.list, buildOffsets(s.list));
       logEl.textContent = '步骤 ' + (stepIdx + 1) + '/' + sim.length + '：' + s.desc;
       statsEl.textContent = '比较 ' + s.c + ' 次 ｜ 写入 ' + s.w + ' 次';
     }
@@ -171,15 +270,19 @@
     }
     function startTimer() {
       if (timer) clearInterval(timer);
-      timer = setInterval(tick, Math.max(20, 1200 - parseInt(speedEl.value, 10) * 11));
+      var delay = Math.max(20, 1200 - parseInt(speedEl.value, 10) * 11);
+      // 周期至少覆盖一次动画时长，保证平滑交换能播完
+      timer = setInterval(tick, Math.max(ANIM_MS + 60, delay));
     }
     function tick() {
       if (done) { stopAuto(); return; }
       if (stepIdx + 1 >= sim.length) { finish(); return; }
-      stepIdx++; render();
+      stepIdx++; render(true);
+      animationLoop();
     }
     function finish() {
       done = true; hl = { a: -1, b: -1, mark: -1, lo: -1, hi: -1 };
+      anim = [];
       if (sim.length) {
         draw(sim[sim.length - 1].list);
         var last = sim[sim.length - 1];
@@ -199,7 +302,8 @@
       if (running) stopAuto();
       if (done) return;
       if (stepIdx + 1 >= sim.length) { finish(); return; }
-      stepIdx++; render();
+      stepIdx++; render(true);
+      animationLoop();
     }
 
     btnPlay.addEventListener('click', togglePlay);

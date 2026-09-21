@@ -83,9 +83,68 @@
     var timer = null;
     var n = 4;
 
+    /* ---------- 圆盘搬运动画状态 ---------- */
     var COLORS = ['#5eead4', '#fbbf24', '#f472b6', '#60a5fa', '#a78bfa',
                   '#34d399', '#fb7185', '#facc15', '#38bdf8', '#e879f9',
                   '#4ade80', '#f97316'];
+
+    // anim: { disk, from, to, startY, endY, t }  t 从 0 到 1
+    var anim = null;
+    var ANIM_MS = 420;        // 单次搬运动画时长
+    var rafId = null;
+
+    function easeInOut(u) {
+      return u < 0.5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2;
+    }
+
+    /** 计算某个圆盘在指定柱子上的「顶部 y 坐标」 */
+    function diskTopY(pegs, pegKey, disk, skipDisk) {
+      var W = cv.width, H = cv.height;
+      var baseY = H - 50;
+      var diskH = Math.min(24, (baseY - 70) / Math.max(1, n));
+      var stack = pegs[pegKey] || [];
+      var pos = 0;
+      for (var i = 0; i < stack.length; i++) {
+        if (stack[i] === skipDisk) continue;   // 忽略正在飞行的那个
+        if (stack[i] === disk) break;
+        pos++;
+      }
+      return baseY - diskH * (pos + 1);
+    }
+
+    /** 启动一次搬运动画：disk 从 from 柱搬到 to 柱 */
+    function startMoveAnim(snap, prevSnap) {
+      if (!snap || !snap.move) { anim = null; return; }
+      var mv = snap.move;
+      // 起始位置：上一帧中该圆盘所在的位置
+      var startY = prevSnap ? diskTopY(prevSnap.pegs, mv.from, mv.disk, -1)
+                            : diskTopY(snap.pegs, mv.from, mv.disk, mv.disk);
+      var endY = diskTopY(snap.pegs, mv.to, mv.disk, mv.disk);
+      anim = { disk: mv.disk, from: mv.from, to: mv.to,
+               startY: startY, endY: endY, t: 0 };
+      startAnimLoop();
+    }
+
+    function startAnimLoop() {
+      if (rafId !== null) return;
+      var last = performance.now();
+      function frame(now) {
+        var dt = now - last;
+        last = now;
+        if (!anim) { rafId = null; return; }
+        // 用时间驱动，保证不同帧率下速度一致
+        anim.t += dt / ANIM_MS;
+        if (anim.t >= 1) {
+          anim = null;
+          draw();
+          rafId = null;
+          return;
+        }
+        draw();
+        rafId = requestAnimationFrame(frame);
+      }
+      rafId = requestAnimationFrame(frame);
+    }
 
     /* ---------- 绘制 ---------- */
     function draw() {
@@ -118,24 +177,62 @@
       var pegs = snap.pegs;
       var moving = snap.move;
 
+      // 正在搬动的圆盘：（动画期间单独绘制，不画在原位置）
+      var flyingDisk = anim ? anim.disk : -1;
+
       for (var pi = 0; pi < keys.length; pi++) {
         var pk = keys[pi];
         var stack = pegs[pk];
         for (var si = 0; si < stack.length; si++) {
           var disk = stack[si];                 // 磁盘编号（1 = 最小）
+          if (disk === flyingDisk) continue;    // 飞行中的圆盘稍后单独画
           var w = maxDiskW * (0.25 + 0.75 * disk / n);
           var y = baseY - diskH * (si + 1);
-          var isMoving = moving && moving.disk === disk && moving.to === pk &&
-                         si === stack.length - 1 && cur > 0;
           ctx.fillStyle = COLORS[(disk - 1) % COLORS.length];
-          if (isMoving) {
-            ctx.shadowColor = '#fff';
-            ctx.shadowBlur = 16;
-          }
           roundRect(pegXs[pk] - w / 2, y, w, diskH - 2, 5);
           ctx.fill();
-          ctx.shadowBlur = 0;
         }
+      }
+
+      // 绘制飞行中的圆盘（三段式：抬起 → 平移 → 落下）
+      if (anim && anim.disk > 0) {
+        var aw = maxDiskW * (0.25 + 0.75 * anim.disk / n);
+        var fromX = pegXs[anim.from];
+        var toX = pegXs[anim.to];
+        var e = easeInOut(anim.t);
+        var ax, ay;
+
+        // 抬起高度：略高于最高的柱子
+        var liftY = 40;
+        if (anim.t < 0.3) {
+          // 第一段：垂直抬起
+          var u = easeInOut(anim.t / 0.3);
+          ax = fromX;
+          ay = anim.startY + (liftY - anim.startY) * u;
+        } else if (anim.t < 0.7) {
+          // 第二段：水平平移（带一点抛物线弧度，看起来更自然）
+          var u2 = easeInOut((anim.t - 0.3) / 0.4);
+          ax = fromX + (toX - fromX) * u2;
+          ay = liftY - Math.sin(u2 * Math.PI) * 18;
+        } else {
+          // 第三段：垂直落下
+          var u3 = easeInOut((anim.t - 0.7) / 0.3);
+          ax = toX;
+          ay = liftY + (anim.endY - liftY) * u3;
+        }
+
+        ctx.shadowColor = 'rgba(255,255,255,0.85)';
+        ctx.shadowBlur = 18;
+        ctx.fillStyle = COLORS[(anim.disk - 1) % COLORS.length];
+        roundRect(ax - aw / 2, ay, aw, diskH - 2, 5);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+
+        // 加一圈高亮描边，让飞行中的圆盘更醒目
+        ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+        ctx.lineWidth = 2;
+        roundRect(ax - aw / 2, ay, aw, diskH - 2, 5);
+        ctx.stroke();
       }
 
       // 顶部提示：刚刚那一步
@@ -182,6 +279,7 @@
     /* ---------- 加载 ---------- */
     function load(disks) {
       stopPlay();
+      anim = null;
       n = disks;
       UI.api('/api/hanoi/simulate?disks=' + disks).then(function (res) {
         if (res && res.snapshots) {
@@ -200,26 +298,61 @@
       if (timer) { clearInterval(timer); timer = null; }
       btnPlay.textContent = '▶ 播放';
     }
+
+    /** 推进一步：先播搬运动画，动画结束后再调用回调 */
+    function advanceTo(targetCur, onDone) {
+      if (targetCur <= 0 || targetCur >= snapshots.length) return false;
+      var prev = snapshots[targetCur - 1];
+      cur = targetCur;
+      updateLabel();
+      startMoveAnim(snapshots[cur], prev);
+      // 等动画播完
+      var wait = ANIM_MS + 30;
+      var check = setInterval(function () {
+        if (!anim) {
+          clearInterval(check);
+          if (onDone) onDone();
+        }
+      }, 30);
+      // 兜底：即使动画异常也要继续
+      setTimeout(function () { clearInterval(check); if (onDone) onDone(); }, wait + 200);
+      return true;
+    }
+
     function play() {
       if (timer) { stopPlay(); return; }
-      if (cur >= snapshots.length - 1) { cur = 0; render(); }
+      if (cur >= snapshots.length - 1) { cur = 0; anim = null; draw(); updateLabel(); }
       btnPlay.textContent = '⏸ 暂停';
       var total = snapshots.length - 1;
-      var delay = total > 100 ? 40 : (total > 30 ? 160 : 420);
+      // 动画时长 + 一点停顿；步数多时加快
+      var gap = total > 100 ? 0 : (total > 30 ? 60 : 180);
+      var period = ANIM_MS + gap;
+
       timer = setInterval(function () {
         if (cur >= snapshots.length - 1) { stopPlay(); return; }
-        cur++; render();
-      }, delay);
+        advanceTo(cur + 1);
+      }, period);
     }
 
     btnPlay.addEventListener('click', play);
     btnStep.addEventListener('click', function () {
       stopPlay();
-      if (cur < snapshots.length - 1) { cur++; render(); }
+      if (cur < snapshots.length - 1) { advanceTo(cur + 1); }
     });
-    btnReset.addEventListener('click', function () { stopPlay(); cur = 0; render(); });
+    btnReset.addEventListener('click', function () {
+      stopPlay(); anim = null; cur = 0; render();
+    });
     progress.addEventListener('input', function () {
-      stopPlay(); cur = parseInt(progress.value, 10); render();
+      stopPlay();
+      // 拖动进度条时用动画过渡到目标帧（只播一次搬运）
+      var target = parseInt(progress.value, 10);
+      if (target > cur && target <= snapshots.length - 1) {
+        advanceTo(target);
+      } else {
+        anim = null;
+        cur = target;
+        render();
+      }
     });
     diskSel.addEventListener('change', function () { load(parseInt(diskSel.value, 10)); });
 

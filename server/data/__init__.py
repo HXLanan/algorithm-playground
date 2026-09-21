@@ -1,7 +1,11 @@
 # -*- coding: utf-8 -*-
-"""题库数据层：汇总三道题单并提供查询接口。
+"""题库数据层：汇总各批题单并提供查询接口。
 
 纯数据模块，不含业务逻辑（筛选、排序等交给 service 层）。
+
+题单来源：
+  · problems_part1~7 —— 按专题组织的基础题单
+  · hot_linked        —— LeetCode 热题 HOT 100 补充（链表部分）
 """
 from typing import List, Dict, Any, Optional
 
@@ -12,10 +16,11 @@ from .problems_part4 import PART4
 from .problems_part5 import PART5
 from .problems_part6 import PART6
 from .problems_part7 import PART7
+from .hot_linked import LINKED as HOT_LINKED
 
 # 全部题目
 PROBLEMS: List[Dict[str, Any]] = (PART1 + PART2 + PART3 + PART4
-                                  + PART5 + PART6 + PART7)
+                                  + PART5 + PART6 + PART7 + HOT_LINKED)
 
 # 按 slug 建索引
 BY_SLUG: Dict[str, Dict[str, Any]] = {p["slug"]: p for p in PROBLEMS}

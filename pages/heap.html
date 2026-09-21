@@ -85,24 +85,87 @@
 
     /* ---------- 绘制 ---------- */
     function levelOf(i) { return Math.floor(Math.log2(i + 1)); }
+
+    /**
+     * 计算节点 i 在画布上的坐标。
+     *
+     * 布局规则：第 L 层有 2^L 个位置，把可用宽度等分成 (2^L + 1) 份，
+     * 节点落在这些等分点上，这样每一层都均匀分布且不会越界。
+     *   · 根节点（L=0）：正好在正中
+     *   · 第 1 层 2 个：在 1/3、2/3 处
+     *   · 第 2 层 4 个：在 1/5、2/5、3/5、4/5 处
+     */
+    var PAD_X = 56;              // 左右留白（保证节点圆圈不贴边）
+    var PAD_TOP = 66;            // 顶部留白
+    var NODE_R = 24;             // 节点半径
+
     function posOf(i) {
       var lvl = levelOf(i);
       var first = Math.pow(2, lvl) - 1;
-      var idxInLevel = i - first;
-      var countInLevel = Math.pow(2, lvl);
+      var idxInLevel = i - first;          // 该层内的第几个（从 0 开始）
+      var countInLevel = Math.pow(2, lvl); // 该层容量
+
       var lvlH = Math.min(96, (H - 110) / 5);
-      var y = 66 + lvl * lvlH;
-      var spanW = W - 120;
-      var x;
-      if (countInLevel === 1) { x = W / 2; }
-      else {
-        var stepW = spanW / (countInLevel - 1 || 1);
-        x = 60 + idxInLevel * stepW;
-        // 让下一层的节点落在父节点之间
-        var parentStep = spanW / Math.max(1, countInLevel / 2);
-        x = 60 + (idxInLevel + 0.5) * parentStep;
-      }
+      var y = PAD_TOP + lvl * lvlH;
+
+      var usable = W - PAD_X * 2;
+      // 把可用宽度分成 (countInLevel + 1) 份，节点落在等分点
+      var x = PAD_X + usable * (idxInLevel + 1) / (countInLevel + 1);
       return [x, y];
+    }
+
+    /* ---------- 节点平滑移动动画 ---------- */
+    // nodeAnim: { index → {fx, fy, tx, ty, t} }  节点从 (fx,fy) 滑向 (tx,ty)
+    var nodeAnim = {};
+    var ANIM_MS = 340;
+    var rafId = null;
+
+    function easeInOut(u) {
+      return u < 0.5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2;
+    }
+
+    /** 记录一次「i 与 j 两个节点互换位置」的动画 */
+    function animateSwapNodes(i, j) {
+      if (i < 0 || j < 0 || i >= heap.length || j >= heap.length) return;
+      var pi = posOf(i), pj = posOf(j);
+      // 动画期间：索引 i 的节点暂时显示在 pi 处滑向 pj 的视觉轨迹
+      nodeAnim[i] = { fx: pi[0], fy: pi[1], tx: pj[0], ty: pj[1], t: 0 };
+      nodeAnim[j] = { fx: pj[0], fy: pj[1], tx: pi[0], ty: pi[1], t: 0 };
+      startAnimLoop();
+    }
+
+    function startAnimLoop() {
+      if (rafId !== null) return;
+      var last = performance.now();
+      function frame(now) {
+        var dt = now - last;
+        last = now;
+        var still = false;
+        for (var k in nodeAnim) {
+          if (!nodeAnim.hasOwnProperty(k)) continue;
+          nodeAnim[k].t += dt / ANIM_MS;
+          if (nodeAnim[k].t >= 1) delete nodeAnim[k];
+          else still = true;
+        }
+        draw();
+        if (still || Object.keys(nodeAnim).length) {
+          rafId = requestAnimationFrame(frame);
+        } else {
+          rafId = null;
+        }
+      }
+      rafId = requestAnimationFrame(frame);
+    }
+
+    /** 计算节点 k 当前应显示的坐标（考虑动画进度） */
+    function displayPos(k) {
+      var base = posOf(k);
+      var a = nodeAnim[k];
+      if (!a) return { x: base[0], y: base[1], moving: false };
+      var e = easeInOut(Math.min(1, a.t));
+      var dx = (a.tx - a.fx) * (1 - e);      // 仍带一部分「旧位置」偏移
+      var dy = (a.ty - a.fy) * (1 - e);
+      return { x: base[0] + dx, y: base[1] + dy, moving: true };
     }
 
     function draw() {
@@ -115,47 +178,65 @@
         return;
       }
 
-      // 画边
+      // 画边（用动画后的位置，让线段跟随节点移动）
       for (var i = 0; i < heap.length; i++) {
-        var p = posOf(i);
+        var p = displayPos(i);
         var l = 2 * i + 1, r = 2 * i + 2;
         [l, r].forEach(function (c) {
           if (c >= heap.length) return;
-          var cp = posOf(c);
+          var cp = displayPos(c);
           ctx.strokeStyle = 'rgba(90,105,150,0.55)';
           ctx.lineWidth = 2;
           ctx.beginPath();
-          ctx.moveTo(p[0], p[1]);
-          ctx.lineTo(cp[0], cp[1]);
+          ctx.moveTo(p.x, p.y);
+          ctx.lineTo(cp.x, cp.y);
           ctx.stroke();
         });
       }
 
-      // 画节点
-      for (var k = 0; k < heap.length; k++) {
-        var pp = posOf(k);
+      // 画节点：移动中的最后画，浮在上层
+      var order = [];
+      for (var q = 0; q < heap.length; q++) order.push(q);
+      order.sort(function (a1, b1) {
+        return (nodeAnim[a1] ? 1 : 0) - (nodeAnim[b1] ? 1 : 0);
+      });
+
+      for (var oi = 0; oi < order.length; oi++) {
+        var k = order[oi];
+        var pp = displayPos(k);
         var isI = k === highlight.i, isJ = k === highlight.j;
         var isRoot = k === 0;
+        var moving = pp.moving;
         var rad = 24;
 
+        if (moving) {
+          ctx.shadowColor = 'rgba(94,234,212,0.6)';
+          ctx.shadowBlur = 16;
+        }
         ctx.beginPath();
-        ctx.arc(pp[0], pp[1], rad, 0, Math.PI * 2);
-        ctx.fillStyle = isI ? '#f472b6' : (isJ ? '#fbbf24' : (isRoot ? '#5eead4' : '#2b3350'));
+        ctx.arc(pp.x, pp.y, rad, 0, Math.PI * 2);
+        ctx.fillStyle = moving ? '#7c8be0'
+                     : (isI ? '#f472b6' : (isJ ? '#fbbf24' : (isRoot ? '#5eead4' : '#2b3350')));
         ctx.fill();
+        ctx.shadowBlur = 0;
         ctx.strokeStyle = isI ? '#f472b6' : (isJ ? '#fbbf24' : '#4a5578');
         ctx.lineWidth = 2.5;
         ctx.stroke();
 
-        ctx.fillStyle = (isI || isJ || isRoot) ? '#0b0e1a' : '#e6e9f5';
+        // 数字在圆圈内部：亮色底（粉/黄/青/移动蓝）用深色数字对比度最好；
+        // 普通节点（深蓝底 #2b3350）用亮色数字。
+        var brightBg = isI || isJ || isRoot;
+        ctx.fillStyle = brightBg ? '#0b0e1a'
+                      : (moving ? '#eaf0ff' : '#e6e9f5');
         ctx.font = 'bold 16px sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(String(heap[k]), pp[0], pp[1]);
+        ctx.fillText(String(heap[k]), pp.x, pp.y);
 
-        // 下标
+        // 下标（跟随节点位置）
         ctx.fillStyle = '#5d6a92';
         ctx.font = '10px sans-serif';
-        ctx.fillText('[' + k + ']', pp[0], pp[1] + 36);
+        ctx.fillText('[' + k + ']', pp.x, pp.y + 36);
       }
 
       // 底部数组表示
@@ -167,9 +248,10 @@
         ctx.fillText('数组表示：', 30, H - 26);
         var x0 = 108;
         for (var m = 0; m < heap.length; m++) {
-          ctx.fillStyle = (m === highlight.i) ? '#f472b6' : '#232a45';
+          var isMoving = !!nodeAnim[m];
+          ctx.fillStyle = isMoving ? '#7c8be0' : ((m === highlight.i) ? '#f472b6' : '#232a45');
           ctx.fillRect(x0 + m * 38, H - 42, 34, 26);
-          ctx.fillStyle = (m === highlight.i) ? '#0b0e1a' : '#cfd8f0';
+          ctx.fillStyle = (isMoving || m === highlight.i) ? '#0b0e1a' : '#cfd8f0';
           ctx.font = 'bold 13px monospace';
           ctx.textAlign = 'center';
           ctx.fillText(String(heap[m]), x0 + m * 38 + 17, H - 24);
@@ -182,45 +264,91 @@
       if (text) msg.textContent = text;
     }
 
-    /* ---------- 操作（本地实现，带高亮） ---------- */
+    /* ---------- 操作（本地实现，带平滑交换动画） ---------- */
     function localPush(v) {
       heap.push(v);
       var i = heap.length - 1;
       highlight = { i: i, j: Math.floor((i - 1) / 2) };
       draw();
-      var steps = [];
-      while (i > 0) {
-        var p = Math.floor((i - 1) / 2);
-        if (heap[i] < heap[p]) {
-          var t = heap[i]; heap[i] = heap[p]; heap[p] = t;
-          steps.push('与父节点交换');
-          i = p;
+
+      // 先算出所有需要交换的步骤
+      var swapList = [];
+      var sim = heap.slice();
+      var k = i;
+      while (k > 0) {
+        var p = Math.floor((k - 1) / 2);
+        if (sim[k] < sim[p]) {
+          var t = sim[k]; sim[k] = sim[p]; sim[p] = t;
+          swapList.push([k, p]);
+          k = p;
         } else break;
       }
-      highlight = { i: -1, j: -1 };
-      draw();
-      updateStats('插入 ' + v + '：放到数组末尾，然后一路上浮' +
-                  (steps.length ? '（交换了 ' + steps.length + ' 次）' : '（无需上浮，已满足堆序）'));
+
+      updateStats('插入 ' + v + '：放到数组末尾，开始上浮' +
+                  (swapList.length ? '（需交换 ' + swapList.length + ' 次）' : '（无需上浮）'));
+
+      // 按顺序模拟交换，边交换边播动画
+      var step = 0;
+      function doNext() {
+        if (step >= swapList.length) {
+          highlight = { i: -1, j: -1 };
+          draw();
+          updateStats('插入 ' + v + ' 完成' +
+                      (swapList.length ? '，共上浮 ' + swapList.length + ' 次' : '，已在正确位置'));
+          return;
+        }
+        var sw = swapList[step++];
+        highlight = { i: sw[0], j: sw[1] };
+        animateSwapNodes(sw[0], sw[1]);       // 先按旧位置生成动画
+        var a = heap[sw[0]]; heap[sw[0]] = heap[sw[1]]; heap[sw[1]] = a;   // 再真正交换数据
+        draw();
+        setTimeout(doNext, ANIM_MS - 20);
+      }
+      doNext();
     }
+
     function localPop() {
       if (!heap.length) { updateStats('堆已空，无法弹出'); return; }
       var top = heap[0];
       var last = heap.pop();
       if (heap.length) {
         heap[0] = last;
+        // 先算出下沉路径
+        var swapList = [];
+        var sim = heap.slice();
         var i = 0;
         while (true) {
           var l = 2 * i + 1, r = 2 * i + 2, sm = i;
-          if (l < heap.length && heap[l] < heap[sm]) sm = l;
-          if (r < heap.length && heap[r] < heap[sm]) sm = r;
+          if (l < sim.length && sim[l] < sim[sm]) sm = l;
+          if (r < sim.length && sim[r] < sim[sm]) sm = r;
           if (sm === i) break;
-          var t = heap[i]; heap[i] = heap[sm]; heap[sm] = t;
+          var t = sim[i]; sim[i] = sim[sm]; sim[sm] = t;
+          swapList.push([i, sm]);
           i = sm;
         }
+
+        updateStats('弹出堆顶 ' + top + '：把末尾元素放到顶部，开始下沉');
+        var step = 0;
+        function doNext() {
+          if (step >= swapList.length) {
+            highlight = { i: -1, j: -1 };
+            draw();
+            updateStats('弹出堆顶 ' + top + ' 完成，堆已重新调整');
+            return;
+          }
+          var sw = swapList[step++];
+          highlight = { i: sw[0], j: sw[1] };
+          animateSwapNodes(sw[0], sw[1]);
+          var a = heap[sw[0]]; heap[sw[0]] = heap[sw[1]]; heap[sw[1]] = a;
+          draw();
+          setTimeout(doNext, ANIM_MS - 20);
+        }
+        doNext();
+      } else {
+        highlight = { i: -1, j: -1 };
+        draw();
+        updateStats('弹出堆顶 ' + top + ' 完成，堆已清空');
       }
-      highlight = { i: -1, j: -1 };
-      draw();
-      updateStats('弹出堆顶 ' + top + '：把末尾元素放到顶部，然后下沉调整');
     }
 
     function renderFromBackend(steps, finalHeap) {

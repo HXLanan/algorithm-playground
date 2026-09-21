@@ -83,6 +83,23 @@ def create_app():
     def health():
         return {"status": "ok", "service": "algo-playground"}
 
+    # ---------- 前端测试结果回传（仅用于开发期自动化验证） ----------
+    _test_reports = {}
+
+    @app.post("/api/_testreport")
+    def test_report():
+        from flask import request as _rq
+        body = _rq.get_json(silent=True) or {}
+        name = str(body.get("name", "default"))
+        _test_reports[name] = body.get("data")
+        return {"ok": True}
+
+    @app.get("/api/_testreport")
+    def get_test_report():
+        from flask import request as _rq
+        name = _rq.args.get("name", "default")
+        return {"data": _test_reports.get(name)}
+
     # ---------- 静态资源 ----------
     @app.get("/")
     def index():
